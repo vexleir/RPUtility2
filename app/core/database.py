@@ -43,6 +43,16 @@ def _migrate(conn: sqlite3.Connection) -> None:
     except Exception:
         pass   # column already exists
 
+    for col_def in [
+        "play_mode TEXT NOT NULL DEFAULT 'legacy'",
+        "system_pack TEXT",
+        "feature_flags TEXT NOT NULL DEFAULT '{}'",
+    ]:
+        try:
+            conn.execute(f"ALTER TABLE sessions ADD COLUMN {col_def}")
+        except Exception:
+            pass
+
     # v2 → v3 (Phase 2): new columns on memories
     for col_def in [
         "certainty TEXT NOT NULL DEFAULT 'confirmed'",
@@ -444,6 +454,91 @@ def _migrate(conn: sqlite3.Connection) -> None:
     except Exception:
         pass  # column already exists
 
+    for col_def in [
+        "play_mode TEXT NOT NULL DEFAULT 'narrative'",
+        "system_pack TEXT",
+        "feature_flags TEXT NOT NULL DEFAULT '{}'",
+    ]:
+        try:
+            conn.execute(f"ALTER TABLE campaigns ADD COLUMN {col_def}")
+        except Exception:
+            pass
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS system_packs (
+            id                  TEXT PRIMARY KEY,
+            name                TEXT NOT NULL,
+            slug                TEXT NOT NULL UNIQUE,
+            description         TEXT NOT NULL DEFAULT '',
+            default_play_mode   TEXT NOT NULL DEFAULT 'rules',
+            recommended_rulebook_slug TEXT,
+            author              TEXT NOT NULL DEFAULT '',
+            version             TEXT NOT NULL DEFAULT '1.0',
+            is_builtin          INTEGER NOT NULL DEFAULT 0,
+            created_at          TEXT NOT NULL,
+            updated_at          TEXT NOT NULL
+        )
+    """)
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS rulebooks (
+            id              TEXT PRIMARY KEY,
+            name            TEXT NOT NULL,
+            slug            TEXT NOT NULL UNIQUE,
+            description     TEXT NOT NULL DEFAULT '',
+            system_pack     TEXT,
+            author          TEXT NOT NULL DEFAULT '',
+            version         TEXT NOT NULL DEFAULT '1.0',
+            is_builtin      INTEGER NOT NULL DEFAULT 0,
+            sections        TEXT NOT NULL DEFAULT '[]',
+            created_at      TEXT NOT NULL,
+            updated_at      TEXT NOT NULL
+        )
+    """)
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS character_sheets (
+            id                  TEXT PRIMARY KEY,
+            campaign_id         TEXT NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+            owner_type          TEXT NOT NULL DEFAULT 'player',
+            owner_id            TEXT NOT NULL DEFAULT 'player',
+            name                TEXT NOT NULL DEFAULT 'Adventurer',
+            ancestry            TEXT NOT NULL DEFAULT '',
+            character_class     TEXT NOT NULL DEFAULT '',
+            background          TEXT NOT NULL DEFAULT '',
+            level               INTEGER NOT NULL DEFAULT 1,
+            proficiency_bonus   INTEGER NOT NULL DEFAULT 2,
+            abilities           TEXT NOT NULL DEFAULT '{}',
+            skill_modifiers     TEXT NOT NULL DEFAULT '{}',
+            save_modifiers      TEXT NOT NULL DEFAULT '{}',
+            max_hp              INTEGER NOT NULL DEFAULT 10,
+            current_hp          INTEGER NOT NULL DEFAULT 10,
+            temp_hp             INTEGER NOT NULL DEFAULT 0,
+            armor_class         INTEGER NOT NULL DEFAULT 10,
+            speed               INTEGER NOT NULL DEFAULT 30,
+            currencies          TEXT NOT NULL DEFAULT '{}',
+            conditions          TEXT NOT NULL DEFAULT '[]',
+            notes               TEXT NOT NULL DEFAULT '',
+            created_at          TEXT NOT NULL,
+            updated_at          TEXT NOT NULL,
+            UNIQUE(campaign_id, owner_type, owner_id)
+        )
+    """)
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS action_logs (
+            id              TEXT PRIMARY KEY,
+            campaign_id     TEXT NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+            scene_id        TEXT,
+            actor_name      TEXT NOT NULL DEFAULT 'Player',
+            action_type     TEXT NOT NULL DEFAULT 'check',
+            source          TEXT NOT NULL DEFAULT '',
+            summary         TEXT NOT NULL DEFAULT '',
+            details         TEXT NOT NULL DEFAULT '{}',
+            created_at      TEXT NOT NULL
+        )
+    """)
+
     # NPC forms, transformation history, and player relationship history
     for _col in [
         "history_with_player TEXT NOT NULL DEFAULT ''",
@@ -472,6 +567,9 @@ def _migrate(conn: sqlite3.Connection) -> None:
             id              TEXT PRIMARY KEY,
             name            TEXT NOT NULL,
             model_name      TEXT,
+            play_mode       TEXT NOT NULL DEFAULT 'narrative',
+            system_pack     TEXT,
+            feature_flags   TEXT NOT NULL DEFAULT '{}',
             style_guide     TEXT NOT NULL DEFAULT '{}',
             created_at      TEXT NOT NULL,
             updated_at      TEXT NOT NULL
@@ -600,6 +698,9 @@ def _create_tables(conn: sqlite3.Connection) -> None:
             character_name  TEXT NOT NULL,
             lorebook_name   TEXT,
             model_name      TEXT,
+            play_mode       TEXT NOT NULL DEFAULT 'legacy',
+            system_pack     TEXT,
+            feature_flags   TEXT NOT NULL DEFAULT '{}',
             created_at      TEXT NOT NULL,
             last_active     TEXT NOT NULL,
             turn_count      INTEGER DEFAULT 0

@@ -1,0 +1,65 @@
+{
+  "name": "d20 Fantasy Core",
+  "slug": "d20-fantasy-core",
+  "description": "A generic d20 fantasy rulebook for solo or co-op AI-guided play. It emphasizes adventure procedures, simple tactical combat, and strong continuity between narrative and mechanical state.",
+  "system_pack": "d20-fantasy-core",
+  "author": "RP Utility",
+  "version": "0.1",
+  "is_builtin": true,
+  "sections": [
+    {
+      "title": "Core Loop",
+      "priority": 100,
+      "tags": ["gm", "procedure", "core"],
+      "content": "Play proceeds in a loop: the GM frames the situation, the player states intent, the system decides whether a rule triggers, a d20 check or other resolution is made if needed, consequences are applied, and the fiction moves forward."
+    },
+    {
+      "title": "Checks and Difficulty",
+      "priority": 95,
+      "tags": ["checks", "d20", "difficulty"],
+      "content": "When an action has uncertain outcome and meaningful stakes, roll 1d20 and add the relevant modifier. Compare the total to a Difficulty Class. Easy 10, Moderate 15, Hard 20, Extreme 25. If there is no risk or no meaningful opposition, do not roll."
+    },
+    {
+      "title": "Advantage and Disadvantage",
+      "priority": 90,
+      "tags": ["checks", "advantage"],
+      "content": "If circumstances strongly favor a character, roll 2d20 and keep the higher result. If circumstances strongly hinder a character, roll 2d20 and keep the lower. Advantage and disadvantage cancel each other out."
+    },
+    {
+      "title": "Combat Round",
+      "priority": 95,
+      "tags": ["combat", "turns", "initiative"],
+      "content": "Combat is resolved in rounds. Each participant rolls initiative once at the start of the encounter. On a turn, a combatant may move and take one main action. Optional bonus actions or reactions are only used if granted by a feature or circumstance tracked by the system."
+    },
+    {
+      "title": "Attacks and Damage",
+      "priority": 92,
+      "tags": ["combat", "attacks", "damage"],
+      "content": "To attack, roll 1d20 plus the attack modifier and compare it to the target's Armor Class. On a hit, roll the weapon or effect damage and apply it immediately. Natural 20 is a critical hit unless the system pack overrides it."
+    },
+    {
+      "title": "Health and Defeat",
+      "priority": 88,
+      "tags": ["hp", "combat", "conditions"],
+      "content": "Characters track current hit points and maximum hit points. At 0 HP, a creature is defeated, dying, unconscious, or otherwise removed from effective action depending on the campaign's tone and the GM's framing."
+    },
+    {
+      "title": "Rest and Recovery",
+      "priority": 80,
+      "tags": ["rest", "recovery", "travel"],
+      "content": "A short rest is a meaningful pause used to regroup and recover lightly. A long rest is a full period of safety and sleep that restores most resources. The exact amount restored should be tracked deterministically once the character-sheet system is in place."
+    },
+    {
+      "title": "Inventory and Equipment",
+      "priority": 78,
+      "tags": ["inventory", "items", "equipment"],
+      "content": "Equipment matters mechanically. Weapons, armor, consumables, tools, and treasure should be tracked explicitly. If an item is lost, broken, spent, or equipped, that state change must be recorded by the system."
+    },
+    {
+      "title": "Narrative Guidance",
+      "priority": 75,
+      "tags": ["gm", "narrative", "tone"],
+      "content": "The GM should use the rules to create fair stakes, but narration should remain vivid and fiction-first. Do not call for repetitive checks when a single meaningful resolution can cover an action. Let failure create new problems instead of stopping the story."
+    }
+  ]
+}

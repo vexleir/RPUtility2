@@ -11,6 +11,9 @@ from __future__ import annotations
 import re as _re
 from collections import defaultdict
 
+from app.core.models import PlayMode
+from app.rules.registry import get_system_pack, list_rulebooks
+
 # Maximum chronicle entries sent to AI. When the total exceeds this, we keep
 # the first CHRON_ANCHOR entries (world-setting context) and the last
 # CHRON_TAIL entries (recent events). Everything in between is omitted to
@@ -59,6 +62,7 @@ def build_scene_messages(
     *,
     campaign,
     player_character,
+    character_sheet=None,
     world_facts: list,
     npcs_in_scene: list,
     active_threads: list,
@@ -84,7 +88,7 @@ def build_scene_messages(
     recent_turns = scene.turns[-_KEYWORD_SCAN_TURNS:] if scene else []
     recent_text = " ".join(t.content.lower() for t in recent_turns) + " " + user_message.lower()
 
-    system = _build_system(campaign, player_character, world_facts,
+    system = _build_system(campaign, player_character, character_sheet, world_facts,
                            npcs_in_scene, active_threads, chronicle,
                            places, factions, npc_relationships, scene,
                            all_world_npcs=all_world_npcs,
@@ -125,6 +129,7 @@ def build_scene_messages(
 def _build_system(
     campaign,
     player_character,
+    character_sheet,
     world_facts: list,
     npcs_in_scene: list,
     active_threads: list,
@@ -167,6 +172,26 @@ def _build_system(
         )
 
     parts.append("\n".join(role_lines))
+
+    # ── Rules mode / system pack guidance ───────────────────────────────────
+    if campaign and getattr(campaign, "play_mode", PlayMode.NARRATIVE) == PlayMode.RULES:
+        pack = get_system_pack(getattr(campaign, "system_pack", "") or "")
+        if pack:
+            rule_lines = [
+                f"[SYSTEM PACK: {pack.name}]",
+                pack.description,
+                "Apply the system pack's procedures consistently.",
+                "Use rules to determine uncertainty, risk, and action legality before narrating outcomes.",
+            ]
+            rulebook = next(
+                (rb for rb in list_rulebooks() if rb.slug == pack.recommended_rulebook_slug),
+                None,
+            )
+            if rulebook and rulebook.sections:
+                rule_lines.append("[CORE RULES]")
+                for section in sorted(rulebook.sections, key=lambda s: s.priority, reverse=True)[:5]:
+                    rule_lines.append(f"• {section.title}: {section.content}")
+            parts.append("\n".join(rule_lines))
 
     # ── World facts (priority-sorted, keyword-filtered) ───────────────────────
     fact_texts = [f for f in world_facts if f.content and _fact_is_active(f, recent_text)]
@@ -248,6 +273,29 @@ def _build_system(
                 label = f"Scene {entry.scene_number}: " if entry.scene_number else ""
                 pc_lines.append(f"  • {label}{entry.note}")
         parts.append("\n".join(pc_lines))
+
+    if character_sheet and campaign and getattr(campaign, "play_mode", PlayMode.NARRATIVE) == PlayMode.RULES:
+        sheet_lines = [
+            f"[CHARACTER SHEET: {character_sheet.name}]",
+            f"Class: {character_sheet.character_class or 'Adventurer'}",
+            f"Ancestry: {character_sheet.ancestry or 'Unspecified'}",
+            f"Level: {character_sheet.level}",
+            f"HP: {character_sheet.current_hp}/{character_sheet.max_hp}" + (f" (+{character_sheet.temp_hp} temp)" if character_sheet.temp_hp else ""),
+            f"AC: {character_sheet.armor_class}",
+            f"Speed: {character_sheet.speed}",
+            "Abilities: " + ", ".join(
+                f"{k[:3].upper()} {v} ({character_sheet.ability_modifier(k):+d})"
+                for k, v in character_sheet.abilities.items()
+            ),
+        ]
+        if character_sheet.skill_modifiers:
+            top_skills = sorted(character_sheet.skill_modifiers.items())[:8]
+            sheet_lines.append("Skills: " + ", ".join(f"{k} {int(v):+d}" for k, v in top_skills))
+        if character_sheet.conditions:
+            sheet_lines.append("Conditions: " + ", ".join(character_sheet.conditions))
+        if character_sheet.notes:
+            sheet_lines.append(f"Notes: {character_sheet.notes}")
+        parts.append("\n".join(sheet_lines))
 
     # ── NPCs in this scene ────────────────────────────────────────────────────
     if npcs_in_scene:

@@ -45,6 +45,12 @@ class ImportanceLevel(str, Enum):
     CRITICAL = "critical"
 
 
+class PlayMode(str, Enum):
+    LEGACY = "legacy"
+    NARRATIVE = "narrative"
+    RULES = "rules"
+
+
 # ─────────────────────────────────────────────
 # Memory
 # ─────────────────────────────────────────────
@@ -191,6 +197,9 @@ class Session(BaseModel):
     character_name: str
     lorebook_name: Optional[str] = None
     model_name: Optional[str] = None   # overrides config model when set
+    play_mode: PlayMode = PlayMode.LEGACY
+    system_pack: Optional[str] = None
+    feature_flags: dict[str, bool] = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     last_active: datetime = Field(default_factory=lambda: datetime.now(UTC))
     turn_count: int = 0
@@ -590,6 +599,9 @@ class Campaign(BaseModel):
     name: str
     model_name: Optional[str] = None
     summary_model_name: Optional[str] = None  # separate model for scene summary extraction
+    play_mode: PlayMode = PlayMode.NARRATIVE
+    system_pack: Optional[str] = None
+    feature_flags: dict[str, bool] = Field(default_factory=dict)
     style_guide: StyleGuide = Field(default_factory=StyleGuide)
     gen_settings: GenSettings = Field(default_factory=GenSettings)
     notes: str = ""                    # player scratchpad — never sent to AI
@@ -784,3 +796,114 @@ class WorldBuildResult(BaseModel):
     npcs: list[dict] = Field(default_factory=list)
     narrative_threads: list[dict] = Field(default_factory=list)
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class RuleSection(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    title: str
+    content: str
+    tags: list[str] = Field(default_factory=list)
+    priority: int = 0
+
+
+class Rulebook(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    name: str
+    slug: str
+    description: str = ""
+    system_pack: Optional[str] = None
+    author: str = ""
+    version: str = "1.0"
+    is_builtin: bool = False
+    sections: list[RuleSection] = Field(default_factory=list)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class SystemPack(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    name: str
+    slug: str
+    description: str = ""
+    default_play_mode: PlayMode = PlayMode.RULES
+    recommended_rulebook_slug: Optional[str] = None
+    author: str = ""
+    version: str = "1.0"
+    is_builtin: bool = False
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class CharacterSheet(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    campaign_id: str
+    owner_type: str = "player"      # player | npc
+    owner_id: str = "player"
+    name: str = "Adventurer"
+    ancestry: str = ""
+    character_class: str = ""
+    background: str = ""
+    level: int = 1
+    proficiency_bonus: int = 2
+    abilities: dict[str, int] = Field(default_factory=lambda: {
+        "strength": 10,
+        "dexterity": 10,
+        "constitution": 10,
+        "intelligence": 10,
+        "wisdom": 10,
+        "charisma": 10,
+    })
+    skill_modifiers: dict[str, int] = Field(default_factory=dict)
+    save_modifiers: dict[str, int] = Field(default_factory=dict)
+    max_hp: int = 10
+    current_hp: int = 10
+    temp_hp: int = 0
+    armor_class: int = 10
+    speed: int = 30
+    currencies: dict[str, int] = Field(default_factory=lambda: {
+        "cp": 0,
+        "sp": 0,
+        "gp": 0,
+    })
+    conditions: list[str] = Field(default_factory=list)
+    notes: str = ""
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+    def ability_modifier(self, ability: str) -> int:
+        value = int(self.abilities.get(ability.lower(), 10))
+        return (value - 10) // 2
+
+    def resolve_modifier(self, key: str) -> int:
+        lookup = key.strip().lower()
+        if lookup in self.skill_modifiers:
+            return int(self.skill_modifiers[lookup])
+        if lookup in self.save_modifiers:
+            return int(self.save_modifiers[lookup])
+        return self.ability_modifier(lookup)
+
+
+class CheckResolution(BaseModel):
+    roll_expression: str = "d20"
+    dice_total: int
+    dice_rolls: list[int] = Field(default_factory=list)
+    modifier: int = 0
+    total: int = 0
+    difficulty: int = 15
+    success: bool = False
+    outcome: str = "failure"
+    advantage_state: str = "normal"    # normal | advantage | disadvantage
+    reason: str = ""
+    source: str = ""
+
+
+class ActionLogEntry(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    campaign_id: str
+    scene_id: Optional[str] = None
+    actor_name: str = "Player"
+    action_type: str = "check"
+    source: str = ""
+    summary: str = ""
+    details: dict = Field(default_factory=dict)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))

@@ -25,6 +25,7 @@ let _refineTarget = null;
 
 document.addEventListener("DOMContentLoaded", () => {
   loadModels();
+  loadSystemPacks();
   checkStatus();
 });
 
@@ -42,6 +43,24 @@ async function loadModels() {
       opt.textContent = m.name;
       sel.appendChild(opt);
     });
+  } catch {/* ignore */}
+}
+
+async function loadSystemPacks() {
+  try {
+    const res = await fetch("/api/campaigns/system-packs");
+    const packs = await res.json();
+    const sel = document.getElementById("system-pack-select");
+    sel.innerHTML = '<option value="">No system pack</option>';
+    packs.forEach(p => {
+      const opt = document.createElement("option");
+      opt.value = p.slug;
+      opt.textContent = p.name;
+      sel.appendChild(opt);
+    });
+    if (packs.find(p => p.slug === "d20-fantasy-core")) {
+      sel.value = "d20-fantasy-core";
+    }
   } catch {/* ignore */}
 }
 
@@ -842,6 +861,8 @@ async function confirmWorld() {
   }
 
   const modelName = document.getElementById("model-select").value;
+  const playMode = document.getElementById("play-mode-select").value || "narrative";
+  const systemPack = document.getElementById("system-pack-select").value || null;
   showLoading("Creating campaign…", "Saving your world document.");
 
   try {
@@ -852,6 +873,12 @@ async function confirmWorld() {
         world: _world,
         campaign_name: campaignName,
         model_name: modelName || null,
+        play_mode: playMode,
+        system_pack: systemPack,
+        feature_flags: {
+          rules_mode: playMode === "rules",
+          narrative_mode: playMode === "narrative",
+        },
       }),
     });
     if (!res.ok) {
@@ -885,6 +912,8 @@ async function createEmptyCampaign() {
   }
 
   const modelName = document.getElementById("model-select").value;
+  const playMode = document.getElementById("play-mode-select").value || "narrative";
+  const systemPack = document.getElementById("system-pack-select").value || null;
   showLoading("Creating campaign…", "");
 
   const emptyWorld = {
@@ -906,6 +935,12 @@ async function createEmptyCampaign() {
         world: emptyWorld,
         campaign_name: campaignName,
         model_name: modelName || null,
+        play_mode: playMode,
+        system_pack: systemPack,
+        feature_flags: {
+          rules_mode: playMode === "rules",
+          narrative_mode: playMode === "narrative",
+        },
       }),
     });
     if (!res.ok) {
@@ -919,6 +954,26 @@ async function createEmptyCampaign() {
   } catch (e) {
     hideLoading();
     showBanner(`Could not create campaign: ${e.message}`, "error");
+  }
+}
+
+async function createDemoCampaign() {
+  showLoading("Creating demo campaign…", "Loading the built-in d20 tutorial world.");
+  try {
+    const res = await fetch("/api/campaigns/demo/d20-fantasy-core", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: "Unknown error" }));
+      throw new Error(err.detail || `HTTP ${res.status}`);
+    }
+    const data = await res.json();
+    hideLoading();
+    window.location.href = `/campaigns/${data.campaign_id}`;
+  } catch (e) {
+    hideLoading();
+    showBanner(`Could not create demo campaign: ${e.message}`, "error");
   }
 }
 

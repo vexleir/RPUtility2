@@ -20,7 +20,8 @@ from pydantic import BaseModel
 from app.core.config import config
 from app.core.database import ensure_db
 from app.core.models import (
-    StyleGuide, PlayerCharacter, PcDevEntry,
+    StyleGuide, PlayerCharacter, PcDevEntry, PlayMode,
+    ActionLogEntry, CharacterSheet, Rulebook, RuleSection,
     CampaignPlace, NpcCard, NpcStatus, NpcDevEntry,
     NpcRelationship,
     NarrativeThread, ThreadStatus,
@@ -40,6 +41,11 @@ from app.campaigns.store import (
 )
 from app.campaigns.world_builder import WorldBuilder, _dict_to_world_build_result
 from app.campaigns.scene_prompter import build_scene_messages
+from app.characters.store import CharacterSheetStore
+from app.rules.registry import list_system_packs, list_rulebooks, get_system_pack
+from app.rules.store import RulebookStore
+from app.rules.resolution import resolve_d20_check
+from app.rules.action_log import ActionLogStore
 
 log = logging.getLogger("rp_utility")
 
@@ -61,6 +67,9 @@ def _scenes():              return SceneStore(_db())
 def _chronicle():           return ChronicleStore(_db())
 def _factions():            return CampaignFactionStore(_db())
 def _npc_relationships():   return NpcRelationshipStore(_db())
+def _sheets():              return CharacterSheetStore(_db())
+def _rulebooks_store():     return RulebookStore()
+def _action_logs():         return ActionLogStore(_db())
 
 def _world_builder() -> WorldBuilder:
     return WorldBuilder(
@@ -73,6 +82,9 @@ def _world_builder() -> WorldBuilder:
 class CreateCampaignRequest(BaseModel):
     name: str
     model_name: Optional[str] = None
+    play_mode: str = "narrative"
+    system_pack: Optional[str] = None
+    feature_flags: dict[str, bool] = {}
     prose_style: str = ""
     tone: str = ""
     themes: list[str] = []
@@ -81,6 +93,9 @@ class UpdateCampaignRequest(BaseModel):
     name: Optional[str] = None
     model_name: Optional[str] = None
     summary_model_name: Optional[str] = None
+    play_mode: Optional[str] = None
+    system_pack: Optional[str] = None
+    feature_flags: Optional[dict[str, bool]] = None
     prose_style: Optional[str] = None
     tone: Optional[str] = None
     themes: Optional[list[str]] = None
@@ -207,8 +222,49 @@ class ConfirmWorldRequest(BaseModel):
     world: dict  # WorldBuildResult as dict
     campaign_name: str
     model_name: Optional[str] = None
+    play_mode: str = "narrative"
+    system_pack: Optional[str] = None
+    feature_flags: dict[str, bool] = {}
     prose_style: str = ""
     tone: str = ""
+
+
+class SaveRulebookRequest(BaseModel):
+    name: str
+    slug: str
+    description: str = ""
+    system_pack: Optional[str] = None
+    author: str = ""
+    version: str = "1.0"
+    sections: list[dict]
+
+
+class SaveCharacterSheetRequest(BaseModel):
+    name: str = "Adventurer"
+    ancestry: str = ""
+    character_class: str = ""
+    background: str = ""
+    level: int = 1
+    proficiency_bonus: int = 2
+    abilities: dict[str, int] = {}
+    skill_modifiers: dict[str, int] = {}
+    save_modifiers: dict[str, int] = {}
+    max_hp: int = 10
+    current_hp: int = 10
+    temp_hp: int = 0
+    armor_class: int = 10
+    speed: int = 30
+    currencies: dict[str, int] = {}
+    conditions: list[str] = []
+    notes: str = ""
+
+
+class ResolveCheckRequest(BaseModel):
+    source: str
+    difficulty: int = 15
+    roll_expression: str = "d20"
+    advantage_state: str = "normal"
+    reason: str = ""
 
 
 # ── Campaign CRUD ──────────────────────────────────────────────────────────────
@@ -219,14 +275,95 @@ def list_campaigns():
     return [_campaign_dict(c) for c in campaigns]
 
 
+@router.get("/system-packs")
+def api_list_system_packs():
+    return [
+        {
+            "name": p.name,
+            "slug": p.slug,
+            "description": p.description,
+            "default_play_mode": p.default_play_mode.value,
+            "recommended_rulebook_slug": p.recommended_rulebook_slug,
+            "author": p.author,
+            "version": p.version,
+            "is_builtin": p.is_builtin,
+        }
+        for p in list_system_packs()
+    ]
+
+
+@router.get("/rulebooks")
+def api_list_rulebooks():
+    return [
+        {
+            "name": r.name,
+            "slug": r.slug,
+            "description": r.description,
+            "system_pack": r.system_pack,
+            "author": r.author,
+            "version": r.version,
+            "is_builtin": r.is_builtin,
+            "sections": len(r.sections),
+        }
+        for r in list_rulebooks()
+    ]
+
+
+@router.get("/rulebooks/{slug}")
+def api_get_rulebook(slug: str):
+    rulebook = _rulebooks_store().get(slug)
+    if not rulebook:
+        raise HTTPException(404, "Rulebook not found")
+    return _rulebook_dict(rulebook)
+
+
+@router.post("/rulebooks", status_code=201)
+def api_save_rulebook(req: SaveRulebookRequest):
+    sections = [
+        RuleSection(
+            title=s.get("title", "Untitled Section"),
+            content=s.get("content", ""),
+            tags=[str(t) for t in s.get("tags", [])],
+            priority=int(s.get("priority", 0)),
+        )
+        for s in req.sections
+        if s.get("content")
+    ]
+    if not sections:
+        raise HTTPException(400, "Rulebook must include at least one section")
+    rulebook = Rulebook(
+        name=req.name,
+        slug=req.slug,
+        description=req.description,
+        system_pack=req.system_pack,
+        author=req.author,
+        version=req.version,
+        is_builtin=False,
+        sections=sections,
+    )
+    _rulebooks_store().save(rulebook)
+    return _rulebook_dict(rulebook)
+
+
 @router.post("", status_code=201)
 def create_campaign(req: CreateCampaignRequest):
+    try:
+        play_mode = PlayMode(req.play_mode)
+    except ValueError:
+        raise HTTPException(400, "Invalid play mode")
     sg = StyleGuide(
         prose_style=req.prose_style,
         tone=req.tone,
         themes=req.themes,
     )
-    c = _campaigns().create(name=req.name, model_name=req.model_name, style_guide=sg)
+    c = _campaigns().create(
+        name=req.name,
+        model_name=req.model_name,
+        style_guide=sg,
+        play_mode=play_mode,
+        system_pack=req.system_pack,
+        feature_flags=req.feature_flags,
+    )
     return _campaign_dict(c)
 
 
@@ -248,6 +385,15 @@ def update_campaign(campaign_id: str, req: UpdateCampaignRequest):
     if req.name is not None:                 updates["name"] = req.name
     if req.model_name is not None:           updates["model_name"] = req.model_name
     if req.summary_model_name is not None:   updates["summary_model_name"] = req.summary_model_name
+    if req.play_mode is not None:
+        try:
+            updates["play_mode"] = PlayMode(req.play_mode)
+        except ValueError:
+            raise HTTPException(400, "Invalid play mode")
+    if req.system_pack is not None:
+        updates["system_pack"] = req.system_pack
+    if req.feature_flags is not None:
+        updates["feature_flags"] = req.feature_flags
     if any(f is not None for f in [req.prose_style, req.tone, req.themes, req.magic_system]):
         sg = c.style_guide
         if req.prose_style is not None:   sg = sg.model_copy(update={"prose_style": req.prose_style})
@@ -706,6 +852,9 @@ def scene_regenerate_stream(campaign_id: str, scene_id: str, req: SceneRegenerat
 
     # Load context
     pc = _pcs().get(campaign_id)
+    sheet = _sheets().get_for_owner(campaign_id, "player", "player")
+    sheet = _sheets().get_for_owner(campaign_id, "player", "player")
+    sheet = _sheets().get_for_owner(campaign_id, "player", "player")
     world_facts_list = _facts().get_all(campaign_id)
     threads_list = _threads().get_active(campaign_id)
     chronicle_list = _chronicle().get_all(campaign_id)
@@ -721,6 +870,7 @@ def scene_regenerate_stream(campaign_id: str, scene_id: str, req: SceneRegenerat
     messages = build_scene_messages(
         campaign=campaign,
         player_character=pc,
+        character_sheet=sheet,
         world_facts=world_facts_list,
         npcs_in_scene=npc_list,
         active_threads=threads_list,
@@ -814,7 +964,7 @@ def get_prompt_preview(campaign_id: str, scene_id: str):
     all_npcs_list = _npcs().get_all(campaign_id) if scene.allow_unselected_npcs else []
 
     messages = build_scene_messages(
-        campaign=campaign, player_character=pc, world_facts=world_facts_list,
+        campaign=campaign, player_character=pc, character_sheet=sheet, world_facts=world_facts_list,
         npcs_in_scene=npc_list, active_threads=threads_list, chronicle=chronicle_list,
         places=places_list, factions=factions_list, npc_relationships=npc_rels_list,
         all_world_npcs=all_npcs_list, allow_unselected_npcs=scene.allow_unselected_npcs,
@@ -2057,11 +2207,18 @@ def confirm_world(req: ConfirmWorldRequest):
         prose_style=req.prose_style,
         tone=req.tone,
     )
+    try:
+        play_mode = PlayMode(req.play_mode)
+    except ValueError:
+        raise HTTPException(400, "Invalid play mode")
     store = _campaigns()
     campaign = store.create(
         name=req.campaign_name,
         model_name=req.model_name,
         style_guide=sg,
+        play_mode=play_mode,
+        system_pack=req.system_pack,
+        feature_flags=req.feature_flags,
     )
     cid = campaign.id
 
@@ -2139,6 +2296,8 @@ def confirm_world(req: ConfirmWorldRequest):
     return {
         "campaign_id": cid,
         "name": campaign.name,
+        "play_mode": campaign.play_mode.value,
+        "system_pack": campaign.system_pack,
         "counts": {
             "world_facts": len(world.world_facts) + (1 if world.premise else 0),
             "places": len(world.places),
@@ -2147,6 +2306,69 @@ def confirm_world(req: ConfirmWorldRequest):
             "factions": len(world.factions),
         },
     }
+
+
+@router.post("/demo/d20-fantasy-core", status_code=201)
+def create_d20_demo_campaign():
+    import json
+    from pathlib import Path
+
+    demo_path = Path(config.db_path).parent / "demo" / "d20_fantasy_core_demo_campaign.json"
+    if not demo_path.exists():
+        raise HTTPException(404, "Demo campaign file not found")
+
+    raw = json.loads(demo_path.read_text(encoding="utf-8"))
+    req = ConfirmWorldRequest(
+        world=raw["world"],
+        campaign_name=raw.get("campaign_name", "The Lantern at Bramblefork"),
+        model_name=None,
+        play_mode="rules",
+        system_pack="d20-fantasy-core",
+        feature_flags={
+            "rules_mode": True,
+            "demo_campaign": True,
+        },
+        prose_style=raw.get("prose_style", "atmospheric"),
+        tone=raw.get("tone", "grounded"),
+    )
+    result = confirm_world(req)
+    _sheets().save_for_owner(
+        result["campaign_id"],
+        "player",
+        "player",
+        name="The Wayfarer",
+        ancestry="Human",
+        character_class="Adventurer",
+        background="Wayfarer",
+        level=1,
+        proficiency_bonus=2,
+        abilities={
+            "strength": 12,
+            "dexterity": 14,
+            "constitution": 13,
+            "intelligence": 12,
+            "wisdom": 14,
+            "charisma": 10,
+        },
+        skill_modifiers={
+            "stealth": 4,
+            "perception": 4,
+            "investigation": 3,
+            "persuasion": 2,
+            "survival": 4,
+        },
+        save_modifiers={
+            "dexterity": 4,
+            "wisdom": 4,
+        },
+        max_hp=12,
+        current_hp=12,
+        armor_class=13,
+        speed=30,
+        currencies={"cp": 0, "sp": 8, "gp": 12},
+        notes="Demo character for learning d20-fantasy-core play.",
+    )
+    return result
 
 
 # ── Full world state (for overview / scene context) ───────────────────────────
@@ -2160,6 +2382,8 @@ def get_full_world(campaign_id: str):
     return {
         "campaign": _campaign_dict(c),
         "player_character": _pc_dict(_pcs().get(campaign_id)) if _pcs().get(campaign_id) else None,
+        "character_sheet": _sheet_dict(_sheets().get_for_owner(campaign_id, "player", "player")) if _sheets().get_for_owner(campaign_id, "player", "player") else None,
+        "action_logs": [_action_log_dict(a) for a in _action_logs().get_recent(campaign_id, n=20)],
         "world_facts": [_fact_dict(f) for f in _facts().get_all(campaign_id)],
         "places": [_place_dict(p) for p in _places().get_all(campaign_id)],
         "npcs": [_npc_dict(n) for n in _npcs().get_all(campaign_id)],
@@ -2169,6 +2393,80 @@ def get_full_world(campaign_id: str):
         "scenes": [_scene_dict(s) for s in _scenes().get_all(campaign_id)],
         "chronicle": [_chronicle_dict(e) for e in _chronicle().get_all(campaign_id)],
     }
+
+
+@router.get("/{campaign_id}/character-sheet")
+def get_character_sheet(campaign_id: str):
+    _require_campaign(campaign_id)
+    sheet = _sheets().get_for_owner(campaign_id, "player", "player")
+    if not sheet:
+        return {}
+    return _sheet_dict(sheet)
+
+
+@router.put("/{campaign_id}/character-sheet")
+def save_character_sheet(campaign_id: str, req: SaveCharacterSheetRequest):
+    _require_campaign(campaign_id)
+    existing = _sheets().get_for_owner(campaign_id, "player", "player")
+    sheet = _sheets().save_for_owner(
+        campaign_id,
+        "player",
+        "player",
+        name=req.name,
+        ancestry=req.ancestry,
+        character_class=req.character_class,
+        background=req.background,
+        level=req.level,
+        proficiency_bonus=req.proficiency_bonus,
+        abilities=req.abilities or (existing.abilities if existing else None),
+        skill_modifiers=req.skill_modifiers or (existing.skill_modifiers if existing else None),
+        save_modifiers=req.save_modifiers or (existing.save_modifiers if existing else None),
+        max_hp=req.max_hp,
+        current_hp=req.current_hp,
+        temp_hp=req.temp_hp,
+        armor_class=req.armor_class,
+        speed=req.speed,
+        currencies=req.currencies or (existing.currencies if existing else None),
+        conditions=req.conditions,
+        notes=req.notes,
+    )
+    return _sheet_dict(sheet)
+
+
+@router.post("/{campaign_id}/checks/resolve")
+def resolve_campaign_check(campaign_id: str, req: ResolveCheckRequest):
+    campaign = _require_campaign(campaign_id)
+    sheet = _sheets().get_for_owner(campaign_id, "player", "player")
+    if campaign.play_mode != PlayMode.RULES:
+        raise HTTPException(400, "Campaign is not in rules mode")
+    if campaign.system_pack != "d20-fantasy-core":
+        raise HTTPException(400, "Only d20-fantasy-core check resolution is implemented so far")
+    result = resolve_d20_check(
+        sheet=sheet,
+        source=req.source,
+        difficulty=req.difficulty,
+        roll_expression=req.roll_expression,
+        advantage_state=req.advantage_state,
+        reason=req.reason,
+    )
+    scene = _scenes().get_active(campaign_id)
+    actor_name = sheet.name if sheet else (_pcs().get(campaign_id).name if _pcs().get(campaign_id) else "Player")
+    _action_logs().save(ActionLogEntry(
+        campaign_id=campaign_id,
+        scene_id=scene.id if scene else None,
+        actor_name=actor_name,
+        action_type="check",
+        source=req.source,
+        summary=f"{actor_name} made a {req.source} check against DC {req.difficulty}: {result.total} ({result.outcome}).",
+        details=result.model_dump(),
+    ))
+    return result.model_dump()
+
+
+@router.get("/{campaign_id}/action-logs")
+def get_action_logs(campaign_id: str, n: int = 20):
+    _require_campaign(campaign_id)
+    return [_action_log_dict(a) for a in _action_logs().get_recent(campaign_id, n=n)]
 
 
 # ── Scene chat (streaming) ────────────────────────────────────────────────────
@@ -2242,6 +2540,7 @@ def scene_open_stream(campaign_id: str, scene_id: str, req: SceneOpenRequest):
     messages = build_scene_messages(
         campaign=campaign,
         player_character=pc,
+        character_sheet=sheet,
         world_facts=world_facts_list,
         npcs_in_scene=npc_list,
         active_threads=threads_list,
@@ -2338,6 +2637,7 @@ def scene_chat_stream(campaign_id: str, scene_id: str, req: SceneChatRequest):
         raise HTTPException(400, "Scene is already confirmed")
 
     pc = _pcs().get(campaign_id)
+    sheet = _sheets().get_for_owner(campaign_id, "player", "player")
     world_facts_list = _facts().get_all(campaign_id)
     threads_list = _threads().get_active(campaign_id)
     chronicle_list = _chronicle().get_all(campaign_id)
@@ -2355,6 +2655,7 @@ def scene_chat_stream(campaign_id: str, scene_id: str, req: SceneChatRequest):
     messages = build_scene_messages(
         campaign=campaign,
         player_character=pc,
+        character_sheet=sheet,
         world_facts=world_facts_list,
         npcs_in_scene=npc_list,
         active_threads=threads_list,
@@ -2757,6 +3058,9 @@ def _campaign_dict(c) -> dict:
         "name": c.name,
         "model_name": c.model_name,
         "summary_model_name": c.summary_model_name if hasattr(c, "summary_model_name") else None,
+        "play_mode": c.play_mode.value if hasattr(c.play_mode, "value") else c.play_mode,
+        "system_pack": c.system_pack,
+        "feature_flags": c.feature_flags,
         "style_guide": c.style_guide.model_dump(),
         "gen_settings": c.gen_settings.model_dump(),
         "notes": c.notes,
@@ -2783,6 +3087,71 @@ def _pc_dict(pc) -> dict:
         "portrait_image": pc.portrait_image,
         "created_at": pc.created_at.isoformat(),
         "updated_at": pc.updated_at.isoformat(),
+    }
+
+
+def _rulebook_dict(rulebook) -> dict:
+    return {
+        "id": rulebook.id,
+        "name": rulebook.name,
+        "slug": rulebook.slug,
+        "description": rulebook.description,
+        "system_pack": rulebook.system_pack,
+        "author": rulebook.author,
+        "version": rulebook.version,
+        "is_builtin": rulebook.is_builtin,
+        "sections": [
+            {
+                "id": s.id,
+                "title": s.title,
+                "content": s.content,
+                "tags": s.tags,
+                "priority": s.priority,
+            }
+            for s in rulebook.sections
+        ],
+    }
+
+
+def _sheet_dict(sheet) -> dict:
+    return {
+        "id": sheet.id,
+        "campaign_id": sheet.campaign_id,
+        "owner_type": sheet.owner_type,
+        "owner_id": sheet.owner_id,
+        "name": sheet.name,
+        "ancestry": sheet.ancestry,
+        "character_class": sheet.character_class,
+        "background": sheet.background,
+        "level": sheet.level,
+        "proficiency_bonus": sheet.proficiency_bonus,
+        "abilities": sheet.abilities,
+        "skill_modifiers": sheet.skill_modifiers,
+        "save_modifiers": sheet.save_modifiers,
+        "max_hp": sheet.max_hp,
+        "current_hp": sheet.current_hp,
+        "temp_hp": sheet.temp_hp,
+        "armor_class": sheet.armor_class,
+        "speed": sheet.speed,
+        "currencies": sheet.currencies,
+        "conditions": sheet.conditions,
+        "notes": sheet.notes,
+        "created_at": sheet.created_at.isoformat(),
+        "updated_at": sheet.updated_at.isoformat(),
+    }
+
+
+def _action_log_dict(entry) -> dict:
+    return {
+        "id": entry.id,
+        "campaign_id": entry.campaign_id,
+        "scene_id": entry.scene_id,
+        "actor_name": entry.actor_name,
+        "action_type": entry.action_type,
+        "source": entry.source,
+        "summary": entry.summary,
+        "details": entry.details,
+        "created_at": entry.created_at.isoformat(),
     }
 
 

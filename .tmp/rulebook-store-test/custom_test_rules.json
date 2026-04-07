@@ -1,0 +1,17 @@
+{
+  "name": "Custom Test Rules",
+  "slug": "custom-test-rules",
+  "description": "Test rulebook",
+  "system_pack": "d20-fantasy-core",
+  "author": "",
+  "version": "1.0",
+  "is_builtin": false,
+  "sections": [
+    {
+      "title": "Core",
+      "content": "Roll a d20 for uncertain actions.",
+      "tags": [],
+      "priority": 10
+    }
+  ]
+}

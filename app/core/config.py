@@ -94,6 +94,14 @@ class Config(BaseSettings):
     # "raw"  = memories injected as a structured list (useful for debugging)
     memory_injection_mode: Literal["soft", "raw"] = "soft"
 
+    # ── RPG mode / feature flags ──────────────────────────────────────────
+    default_system_pack: str = "d20-fantasy-core"
+    default_campaign_play_mode: Literal["narrative", "rules"] = "narrative"
+    default_session_play_mode: Literal["legacy", "narrative", "rules"] = "legacy"
+    feature_legacy_session_mode: bool = True
+    feature_narrative_campaign_mode: bool = True
+    feature_rules_mode: bool = True
+
     # ── Developer / debug ──────────────────────────────────────────────────
     debug: bool = False
     show_prompt: bool = False        # print full prompt before each generation
@@ -104,6 +112,7 @@ class Config(BaseSettings):
     db_path: str = str(DB_PATH)
     cards_dir: str = str(DATA_DIR / "cards")
     lorebooks_dir: str = str(DATA_DIR / "lorebooks")
+    rules_dir: str = str(DATA_DIR / "rulebooks")
 
     def active_model(self) -> str:
         """Return the model name for the active provider."""

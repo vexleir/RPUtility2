@@ -100,14 +100,15 @@
               <button class="btn btn-sm" onclick="openEditPc()">✎ Edit</button>
             </div>
           </div>
-          <div style="display:flex;gap:12px;align-items:flex-start">
-            <div id="pc-portrait-wrap" style="flex-shrink:0">
+        <div style="display:flex;gap:12px;align-items:flex-start">
+          <div id="pc-portrait-wrap" style="flex-shrink:0">
               <img id="pc-portrait-img" class="npc-portrait-avatar hidden" style="width:56px;height:56px" alt="Player character portrait">
               <div id="pc-portrait-placeholder" class="npc-portrait-avatar" style="width:56px;height:56px;display:flex;align-items:center;justify-content:center;font-size:22px;background:var(--surface2);cursor:pointer" title="Generate or upload portrait" onclick="openImgGen('pc')">🎨</div>
-            </div>
-            <div id="pc-card" class="pc-card muted-placeholder" style="flex:1;min-width:0">No character yet.</div>
           </div>
+          <div id="pc-card" class="pc-card muted-placeholder" style="flex:1;min-width:0">No character yet.</div>
         </div>
+        <div id="pc-sheet-card" class="pc-card muted-placeholder" style="margin-top:10px">No character sheet yet.</div>
+      </div>
 
         <!-- NPCs -->
         <div class="world-section" data-section="npcs">
@@ -522,6 +523,42 @@
           <div class="form-group"><label>Fears</label><textarea class="wb-field" id="edit-pc-fears" rows="2"></textarea></div>
         </div>
         <div class="form-group"><label>How Others See Them</label><textarea class="wb-field" id="edit-pc-how-seen" rows="2"></textarea></div>
+
+        <div class="world-section" style="margin-top:12px;padding:12px">
+          <div class="world-section-header" style="margin-bottom:10px">
+            <h3 style="font-size:1rem">Rules Sheet</h3>
+          </div>
+          <div class="wb-grid-2">
+            <div class="form-group"><label>Ancestry</label><input type="text" class="wb-field" id="sheet-ancestry"></div>
+            <div class="form-group"><label>Class</label><input type="text" class="wb-field" id="sheet-class"></div>
+          </div>
+          <div class="wb-grid-2">
+            <div class="form-group"><label>Level</label><input type="number" class="wb-field" id="sheet-level" min="1" value="1"></div>
+            <div class="form-group"><label>Proficiency Bonus</label><input type="number" class="wb-field" id="sheet-prof" value="2"></div>
+          </div>
+          <div class="wb-grid-2">
+            <div class="form-group"><label>HP</label><input type="number" class="wb-field" id="sheet-current-hp" value="10"></div>
+            <div class="form-group"><label>Max HP</label><input type="number" class="wb-field" id="sheet-max-hp" value="10"></div>
+          </div>
+          <div class="wb-grid-3">
+            <div class="form-group"><label>AC</label><input type="number" class="wb-field" id="sheet-ac" value="10"></div>
+            <div class="form-group"><label>Speed</label><input type="number" class="wb-field" id="sheet-speed" value="30"></div>
+            <div class="form-group"><label>Temp HP</label><input type="number" class="wb-field" id="sheet-temp-hp" value="0"></div>
+          </div>
+          <div class="wb-grid-3">
+            <div class="form-group"><label>STR</label><input type="number" class="wb-field" id="sheet-str" value="10"></div>
+            <div class="form-group"><label>DEX</label><input type="number" class="wb-field" id="sheet-dex" value="10"></div>
+            <div class="form-group"><label>CON</label><input type="number" class="wb-field" id="sheet-con" value="10"></div>
+          </div>
+          <div class="wb-grid-3">
+            <div class="form-group"><label>INT</label><input type="number" class="wb-field" id="sheet-int" value="10"></div>
+            <div class="form-group"><label>WIS</label><input type="number" class="wb-field" id="sheet-wis" value="10"></div>
+            <div class="form-group"><label>CHA</label><input type="number" class="wb-field" id="sheet-cha" value="10"></div>
+          </div>
+          <div class="form-group"><label>Skill Modifiers JSON <span class="dim">(optional)</span></label><textarea class="wb-field" id="sheet-skills" rows="2" placeholder='{"stealth": 4, "perception": 3}'></textarea></div>
+          <div class="form-group"><label>Save Modifiers JSON <span class="dim">(optional)</span></label><textarea class="wb-field" id="sheet-saves" rows="2" placeholder='{"dexterity": 4, "wisdom": 3}'></textarea></div>
+          <div class="form-group"><label>Sheet Notes</label><textarea class="wb-field" id="sheet-notes" rows="2"></textarea></div>
+        </div>
 
         <!-- Dev log -->
         <div class="dev-log-section" style="margin-top:12px">

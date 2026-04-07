@@ -28,6 +28,7 @@ from app.core.models import (
     ConversationTurn,
     Session,
     SceneState,
+    PlayMode,
 )
 
 from app.providers.factory import build_provider, build_extraction_provider
@@ -161,9 +162,20 @@ class RoleplayEngine:
         initial_characters: Optional[list[str]] = None,
         model_name: Optional[str] = None,
         scenario_text: Optional[str] = None,
+        play_mode: PlayMode = PlayMode.LEGACY,
+        system_pack: Optional[str] = None,
+        feature_flags: Optional[dict[str, bool]] = None,
     ) -> Session:
-        session = self.sessions.create(name, character_name, lorebook_name, model_name,
-                                       scenario_text=scenario_text)
+        session = self.sessions.create(
+            name,
+            character_name,
+            lorebook_name,
+            model_name,
+            scenario_text=scenario_text,
+            play_mode=play_mode,
+            system_pack=system_pack,
+            feature_flags=feature_flags,
+        )
         chars = initial_characters or [character_name]
         self.scene_mgr.update(
             session.id,

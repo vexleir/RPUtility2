@@ -184,6 +184,21 @@
         <div id="sidebar-threads" class="sidebar-content"></div>
       </div>
 
+      <!-- Rules sheet -->
+      <div class="sidebar-section" id="rules-sheet-section">
+        <div class="sidebar-section-title" style="display:flex;justify-content:space-between;align-items:center">
+          <span>Rules Sheet</span>
+          <button class="btn btn-ghost btn-sm" id="resolve-check-btn" onclick="openResolveCheckModal()">Resolve Check</button>
+        </div>
+        <div id="sidebar-sheet" class="sidebar-content"></div>
+      </div>
+
+      <!-- Action log -->
+      <div class="sidebar-section" id="action-log-section">
+        <div class="sidebar-section-title">Action Log</div>
+        <div id="sidebar-action-log" class="sidebar-content"></div>
+      </div>
+
       <!-- World facts quick ref -->
       <div class="sidebar-section">
         <div class="sidebar-section-title">World Facts</div>
@@ -296,6 +311,54 @@
         <button class="modal-close" onclick="closeModal('scene-context-modal')">✕</button>
       </div>
       <div class="modal-body" id="scene-context-body"></div>
+    </div>
+  </div>
+
+  <!-- ── Resolve Check modal ─────────────────────────────────────── -->
+  <div id="resolve-check-modal" class="modal-backdrop hidden">
+    <div class="modal" style="max-width:520px">
+      <div class="modal-header">
+        <span>Resolve d20 Check</span>
+        <button class="modal-close" onclick="closeModal('resolve-check-modal')">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="muted" style="margin-bottom:12px">
+          Use the deterministic d20 resolver for rules-mode campaigns. The result is saved to the campaign action log.
+        </p>
+        <div class="wb-grid-2">
+          <div class="form-group">
+            <label>Source</label>
+            <input type="text" id="check-source" class="wb-field" placeholder="e.g. stealth, dexterity, perception">
+          </div>
+          <div class="form-group">
+            <label>Difficulty Class</label>
+            <input type="number" id="check-difficulty" class="wb-field" min="1" value="15">
+          </div>
+        </div>
+        <div class="wb-grid-2">
+          <div class="form-group">
+            <label>Advantage State</label>
+            <select id="check-advantage" class="wb-field">
+              <option value="normal">Normal</option>
+              <option value="advantage">Advantage</option>
+              <option value="disadvantage">Disadvantage</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Roll Expression</label>
+            <input type="text" id="check-roll-expression" class="wb-field" value="d20" placeholder="d20">
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Reason <span class="dim">(optional)</span></label>
+          <textarea id="check-reason" class="wb-field" rows="3" placeholder="e.g. Sneaking past the ruined gatehouse sentries"></textarea>
+        </div>
+        <div id="resolve-check-preview" class="muted" style="font-size:0.84rem"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-primary" id="resolve-check-submit" onclick="submitResolveCheck()">Resolve</button>
+        <button class="btn" onclick="closeModal('resolve-check-modal')">Cancel</button>
+      </div>
     </div>
   </div>
 

@@ -10,9 +10,11 @@
 let _campaign = null;
 let _scene = null;       // active scene or null
 let _pc = null;
+let _sheet = null;
 let _npcs = [];
 let _threads = [];
 let _facts = [];
+let _actionLogs = [];
 let _streaming = false;
 let _userName = "Player";
 
@@ -53,9 +55,11 @@ async function loadWorld() {
     const data = await res.json();
     _campaign = data.campaign;
     _pc = data.player_character;
+    _sheet = data.character_sheet || null;
     _npcs = data.npcs || [];
     _threads = (data.threads || []).filter(t => t.status === "active");
     _facts = (data.world_facts || []).filter(f => f.content);
+    _actionLogs = data.action_logs || [];
     _scene = data.scenes?.find(s => !s.confirmed) || null;
 
     document.getElementById("back-link").href = `/campaigns/${CAMPAIGN_ID}`;
@@ -1329,6 +1333,9 @@ function renderSidebar() {
     threadContainer.innerHTML = '<div class="muted" style="font-size:0.8rem">No active threads.</div>';
   }
 
+  renderRulesSidebar();
+  renderActionLogSidebar();
+
   // World facts (first 5)
   const factsContainer = document.getElementById("sidebar-facts");
   const displayFacts = _facts.slice(0, 5);
@@ -1344,6 +1351,86 @@ function renderSidebar() {
   buildContextModal();
 }
 
+function renderRulesSidebar() {
+  const section = document.getElementById("rules-sheet-section");
+  const button = document.getElementById("resolve-check-btn");
+  const container = document.getElementById("sidebar-sheet");
+  if (!container || !section || !button) return;
+
+  const isRulesMode = _campaign?.play_mode === "rules" && _campaign?.system_pack === "d20-fantasy-core";
+  section.style.display = isRulesMode ? "" : "none";
+  if (!isRulesMode) return;
+
+  if (!_sheet || !_sheet.name) {
+    container.innerHTML = '<div class="muted" style="font-size:0.8rem">No character sheet yet. Add one from the campaign overview to get deterministic checks.</div>';
+    button.disabled = true;
+    return;
+  }
+
+  button.disabled = false;
+  const abilities = _sheet.abilities || {};
+  const abilityLine = ["strength", "dexterity", "constitution", "intelligence", "wisdom", "charisma"]
+    .map(key => `${key.slice(0, 3).toUpperCase()} ${abilities[key] ?? 10}`)
+    .join(" · ");
+  const conditions = (_sheet.conditions || []).length
+    ? (_sheet.conditions || []).join(", ")
+    : "None";
+  const topSkills = Object.entries(_sheet.skill_modifiers || {})
+    .slice(0, 6)
+    .map(([key, value]) => `${key} ${value >= 0 ? "+" : ""}${value}`)
+    .join(" · ");
+
+  container.innerHTML = `
+    <div class="sidebar-item">
+      <div class="sidebar-item-name">${escHtml(_sheet.name)}</div>
+      <div class="sidebar-item-sub muted">${escHtml(_sheet.character_class || "Adventurer")} · Level ${_sheet.level || 1}${_sheet.ancestry ? ` · ${escHtml(_sheet.ancestry)}` : ""}</div>
+    </div>
+    <div class="sidebar-item">
+      <div class="sidebar-item-sub">HP ${_sheet.current_hp}/${_sheet.max_hp}${_sheet.temp_hp ? ` (+${_sheet.temp_hp} temp)` : ""} · AC ${_sheet.armor_class} · Speed ${_sheet.speed}</div>
+    </div>
+    <div class="sidebar-item">
+      <div class="sidebar-item-sub">${escHtml(abilityLine)}</div>
+    </div>
+    ${topSkills ? `<div class="sidebar-item"><div class="sidebar-item-sub muted">Skills: ${escHtml(topSkills)}</div></div>` : ""}
+    <div class="sidebar-item">
+      <div class="sidebar-item-sub muted">Conditions: ${escHtml(conditions)}</div>
+    </div>
+  `;
+}
+
+function renderActionLogSidebar() {
+  const section = document.getElementById("action-log-section");
+  const container = document.getElementById("sidebar-action-log");
+  if (!container || !section) return;
+
+  const isRulesMode = _campaign?.play_mode === "rules";
+  section.style.display = isRulesMode ? "" : "none";
+  if (!isRulesMode) return;
+
+  const logs = (_actionLogs || []).slice(0, 8);
+  if (!logs.length) {
+    container.innerHTML = '<div class="muted" style="font-size:0.8rem">No logged actions yet.</div>';
+    return;
+  }
+
+  container.innerHTML = logs.map(log => {
+    const details = log.details || {};
+    const headline = details.total !== undefined
+      ? `${details.source || log.source || "check"} ${details.total} vs DC ${details.difficulty}`
+      : log.summary;
+    const meta = details.outcome
+      ? `${details.outcome.replaceAll("_", " ")}${details.advantage_state && details.advantage_state !== "normal" ? ` · ${details.advantage_state}` : ""}`
+      : "";
+    return `
+      <div class="sidebar-item">
+        <div class="sidebar-item-name">${escHtml(log.actor_name || "Player")}</div>
+        <div class="sidebar-item-sub">${escHtml(headline)}</div>
+        ${meta ? `<div class="sidebar-item-sub muted">${escHtml(meta)}</div>` : ""}
+      </div>
+    `;
+  }).join("");
+}
+
 function buildContextModal() {
   const body = document.getElementById("scene-context-body");
   const pc = _pc;
@@ -1355,6 +1442,14 @@ function buildContextModal() {
         <h4>Player Character</h4>
         <div><strong>${escHtml(pc.name)}</strong></div>
         ${pc.personality ? `<div class="muted">${escHtml(pc.personality)}</div>` : ""}
+      </div>` : ""}
+
+    ${_campaign?.play_mode === "rules" && _sheet ? `
+      <div class="world-section">
+        <h4>Rules Context</h4>
+        <div><strong>${escHtml(_campaign.system_pack || "d20-fantasy-core")}</strong></div>
+        <div class="muted">${escHtml(_sheet.character_class || "Adventurer")} · Level ${_sheet.level || 1}${_sheet.ancestry ? ` · ${escHtml(_sheet.ancestry)}` : ""}</div>
+        <div style="margin-top:6px">HP ${_sheet.current_hp}/${_sheet.max_hp}${_sheet.temp_hp ? ` (+${_sheet.temp_hp} temp)` : ""} · AC ${_sheet.armor_class} · Speed ${_sheet.speed}</div>
       </div>` : ""}
 
     ${_scene?.intent ? `
@@ -1404,6 +1499,74 @@ function appendDiceRoll(label, rolls, mod, total) {
   div.innerHTML = `<span class="dice-label">🎲 ${escHtml(label)}</span><span class="dice-rolls">${rollStr}${modStr}</span><span class="dice-total">${total}</span>`;
   area.appendChild(div);
   scrollToBottom();
+}
+
+function openResolveCheckModal() {
+  if (_campaign?.play_mode !== "rules") {
+    showToast("Check resolution is only available in rules mode.", "info");
+    return;
+  }
+  if (!_sheet || !_sheet.name) {
+    showToast("Create a character sheet on the campaign overview first.", "warning");
+    return;
+  }
+  document.getElementById("check-source").value = "";
+  document.getElementById("check-difficulty").value = "15";
+  document.getElementById("check-advantage").value = "normal";
+  document.getElementById("check-roll-expression").value = "d20";
+  document.getElementById("check-reason").value = "";
+  document.getElementById("resolve-check-preview").textContent =
+    `Using ${_sheet.name}'s sheet from ${_campaign.system_pack || "d20-fantasy-core"}.`;
+  openModal("resolve-check-modal");
+  setTimeout(() => document.getElementById("check-source").focus(), 50);
+}
+
+async function submitResolveCheck() {
+  const source = document.getElementById("check-source").value.trim();
+  const difficulty = parseInt(document.getElementById("check-difficulty").value, 10) || 15;
+  const advantage_state = document.getElementById("check-advantage").value || "normal";
+  const roll_expression = document.getElementById("check-roll-expression").value.trim() || "d20";
+  const reason = document.getElementById("check-reason").value.trim();
+  const submitBtn = document.getElementById("resolve-check-submit");
+
+  if (!source) {
+    showError("Check source is required.");
+    return;
+  }
+
+  submitBtn.disabled = true;
+  submitBtn.textContent = "Resolving...";
+  try {
+    const res = await fetch(`/api/campaigns/${CAMPAIGN_ID}/checks/resolve`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ source, difficulty, advantage_state, roll_expression, reason }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+
+    appendDiceRoll(`${source} check`, data.dice_rolls || [], data.modifier || 0, data.total || 0);
+    await refreshActionLogs();
+    renderSidebar();
+    closeModal("resolve-check-modal");
+    const resultText = `${source} ${data.total} vs DC ${difficulty} (${String(data.outcome || "").replaceAll("_", " ")})`;
+    showToast(resultText, data.success ? "success" : "info");
+  } catch (e) {
+    showError(`Could not resolve check: ${e.message}`);
+  } finally {
+    submitBtn.disabled = false;
+    submitBtn.textContent = "Resolve";
+  }
+}
+
+async function refreshActionLogs() {
+  try {
+    const res = await fetch(`/api/campaigns/${CAMPAIGN_ID}/action-logs?n=20`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    _actionLogs = await res.json();
+  } catch (e) {
+    showError(`Could not refresh action log: ${e.message}`);
+  }
 }
 
 // ── Scene search ──────────────────────────────────────────────────────────────

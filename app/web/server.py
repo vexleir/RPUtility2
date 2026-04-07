@@ -26,6 +26,7 @@ log = logging.getLogger("rp_utility")
 
 from app.core.config import config
 from app.core.engine import RoleplayEngine
+from app.core.models import PlayMode
 from app.prompting.builder import derive_relationship_summary
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
@@ -73,6 +74,9 @@ class CreateSessionRequest(BaseModel):
     model_name: Optional[str] = None
     location: str = "Unknown"
     scenario_text: Optional[str] = None  # Scenario Mode — replaces a card file
+    play_mode: str = "legacy"
+    system_pack: Optional[str] = None
+    feature_flags: dict[str, bool] = {}
 
 
 class ChatRequest(BaseModel):
@@ -609,6 +613,9 @@ def api_list_sessions():
             "character_name": s.character_name,
             "lorebook_name": s.lorebook_name,
             "model_name": s.model_name,
+            "play_mode": s.play_mode.value if hasattr(s.play_mode, "value") else s.play_mode,
+            "system_pack": s.system_pack,
+            "feature_flags": s.feature_flags,
             "turn_count": s.turn_count,
             "created_at": s.created_at.isoformat(),
             "last_active": s.last_active.isoformat(),
@@ -633,6 +640,10 @@ def api_create_session(req: CreateSessionRequest):
             )
 
     char_name = req.character_name or "Character"
+    try:
+        play_mode = PlayMode(req.play_mode)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid play mode")
     session = engine.new_session(
         name=req.name,
         character_name=char_name,
@@ -641,12 +652,18 @@ def api_create_session(req: CreateSessionRequest):
         initial_location=req.location or "Unknown",
         initial_characters=[char_name],
         scenario_text=req.scenario_text or None,
+        play_mode=play_mode,
+        system_pack=req.system_pack,
+        feature_flags=req.feature_flags,
     )
     return {
         "id": session.id,
         "name": session.name,
         "character_name": session.character_name,
         "model_name": session.model_name,
+        "play_mode": session.play_mode.value if hasattr(session.play_mode, "value") else session.play_mode,
+        "system_pack": session.system_pack,
+        "feature_flags": session.feature_flags,
     }
 
 
@@ -666,6 +683,9 @@ def api_get_session(session_id: str):
         "character_name": session.character_name,
         "lorebook_name": session.lorebook_name,
         "model_name": session.model_name or config.active_model(),
+        "play_mode": session.play_mode.value if hasattr(session.play_mode, "value") else session.play_mode,
+        "system_pack": session.system_pack,
+        "feature_flags": session.feature_flags,
         "turn_count": session.turn_count,
         "first_message": card.first_message if card else "",
         "scene": _scene_dict(scene),

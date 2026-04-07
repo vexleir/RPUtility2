@@ -1,0 +1,100 @@
+{
+  "campaign_name": "The Lantern at Bramblefork",
+  "prose_style": "atmospheric",
+  "tone": "grounded",
+  "world": {
+    "premise": "The village of Bramblefork stands at the edge of the Gloamwood, where an old watchtower has begun shining with a ghostly green lantern no one remembers lighting. Travelers are vanishing on the north road, and the village reeve is quietly desperate for help before panic breaks the harvest festival.",
+    "world_facts": [
+      "Bramblefork is a small frontier village that survives on milling, trapping, and trade caravans.",
+      "The Gloamwood is old, mist-heavy, and full of half-remembered barrows, shrines, and ruined watch posts.",
+      "The Lantern Tower once served as a warning beacon against raiders, but it has been abandoned for decades.",
+      "A green light now burns from the tower each night, even in rain and heavy fog.",
+      "People in Bramblefork believe the road disappearances are connected to the relit tower.",
+      "The village is preparing for the Lanternwake harvest festival even as fear spreads."
+    ],
+    "magic_system": "Magic is rare, practical, and unsettling. Common folk know charms and warding signs, but true spellcraft is unusual and often treated with caution. Supernatural forces leave marks on places, objects, and people, and those traces can be investigated.",
+    "factions": [
+      {
+        "name": "The Reeve's Council",
+        "description": "The local civil authority trying to keep Bramblefork calm and functioning.",
+        "goals": "Protect the harvest festival, stop the disappearances, avoid mass panic.",
+        "methods": "Quiet investigation, small rewards, careful public messaging."
+      },
+      {
+        "name": "The Mosswardens",
+        "description": "A loose fellowship of trappers, scouts, and wardens who know the forest trails.",
+        "goals": "Keep the deep wood from swallowing the village's borders.",
+        "methods": "Trailcraft, local knowledge, practical superstition, hidden waymarks."
+      }
+    ],
+    "player_character": {
+      "name": "The Wayfarer",
+      "appearance": "Travel-worn cloak, sturdy boots, watchful eyes, and gear kept in careful order.",
+      "personality": "Curious, cautious, and willing to help if the danger feels real.",
+      "background": "A wandering adventurer with enough experience to know when a simple village problem is hiding something stranger.",
+      "wants": "Earn trust, uncover the truth of the lantern, and keep innocent people alive.",
+      "fears": "Being too late, walking into a trap, and letting the supernatural set the terms of the encounter.",
+      "how_seen": "An outsider who might be exactly the kind of trouble Bramblefork needs."
+    },
+    "places": [
+      {
+        "name": "Bramblefork Square",
+        "description": "A muddy central square ringed by timber buildings, lantern posts, and a market cross.",
+        "current_state": "Busy by day, tense by night."
+      },
+      {
+        "name": "The Lantern Tower",
+        "description": "A crumbling stone watchtower on a low ridge north of the village, now lit by an eerie green flame.",
+        "current_state": "Visible from the village every night."
+      },
+      {
+        "name": "The Bent Stag Inn",
+        "description": "The best place in Bramblefork to hear rumors, make introductions, and find nervous caravan guards.",
+        "current_state": "Crowded with talk of disappearances."
+      }
+    ],
+    "npcs": [
+      {
+        "name": "Reeve Alden Marr",
+        "appearance": "Grey-bearded, broad-shouldered, and worn thin by responsibility.",
+        "personality": "Pragmatic, guarded, and grateful for competence.",
+        "role": "Village reeve",
+        "relationship_to_player": "Potential employer and early ally.",
+        "current_location": "Bramblefork Hall",
+        "current_state": "Trying to solve the crisis without spreading panic."
+      },
+      {
+        "name": "Sella Thorn",
+        "appearance": "Lean, sharp-eyed, with a hunter's braid and a moss-green cloak.",
+        "personality": "Blunt, skeptical, but quietly brave.",
+        "role": "Mosswarden scout",
+        "relationship_to_player": "Possible guide into the Gloamwood if trust is earned.",
+        "current_location": "The Bent Stag Inn",
+        "current_state": "Investigating signs near the north road."
+      },
+      {
+        "name": "Brother Cal",
+        "appearance": "A stooped shrine-keeper with ink-stained fingers and a lantern charm at his throat.",
+        "personality": "Gentle, anxious, and unusually knowledgeable about old rites.",
+        "role": "Keeper of the roadside shrine",
+        "relationship_to_player": "Nervous source of lore and local history.",
+        "current_location": "Shrine of the Three Stones",
+        "current_state": "Afraid the green light marks a broken ward."
+      }
+    ],
+    "narrative_threads": [
+      {
+        "title": "The Green Lantern",
+        "description": "Find out why the old tower is lit again and what force is sustaining the flame."
+      },
+      {
+        "title": "The Missing Travelers",
+        "description": "Track what happened to those who vanished on the north road."
+      },
+      {
+        "title": "Festival Under Shadow",
+        "description": "Decide whether Bramblefork can safely continue Lanternwake while the threat grows."
+      }
+    ]
+  }
+}

@@ -9,6 +9,7 @@
 
 let _campaign = null;
 let _pc = null;
+let _sheet = null;
 let _facts = [];
 let _npcs = [];
 let _places = [];
@@ -17,6 +18,7 @@ let _factions = [];
 let _relationships = [];
 let _scenes = [];
 let _chronicle = [];
+let _actionLogs = [];
 
 let _fieldKey = null;   // which field is being edited in the field modal
 let _editingNpcId = null;  // NPC whose dev-log modal is open
@@ -36,6 +38,8 @@ async function loadWorld() {
     const data = await res.json();
     _campaign       = data.campaign;
     _pc             = data.player_character;
+    _sheet          = data.character_sheet;
+    _actionLogs     = data.action_logs || [];
     _facts          = data.world_facts || [];
     _npcs           = data.npcs || [];
     _places         = data.places || [];
@@ -154,6 +158,7 @@ function renderAll() {
 
 function renderPcCard() {
   const el = document.getElementById("pc-card");
+  const sheetEl = document.getElementById("pc-sheet-card");
 
   // Portrait display
   const portraitImg         = document.getElementById("pc-portrait-img");
@@ -171,14 +176,34 @@ function renderPcCard() {
 
   if (!_pc || !_pc.name) {
     el.innerHTML = '<span class="muted">No player character yet. Click Edit to add one.</span>';
+  } else {
+    el.innerHTML = `
+      <div class="pc-card-name">${escHtml(_pc.name)}</div>
+      ${_pc.personality ? `<div class="pc-card-field"><span class="pc-field-label">Personality:</span> ${escHtml(_pc.personality)}</div>` : ""}
+      ${_pc.background  ? `<div class="pc-card-field"><span class="pc-field-label">Background:</span> ${escHtml(_pc.background)}</div>` : ""}
+      ${_pc.wants       ? `<div class="pc-card-field"><span class="pc-field-label">Wants:</span> ${escHtml(_pc.wants)}</div>` : ""}
+      ${_pc.fears       ? `<div class="pc-card-field"><span class="pc-field-label">Fears:</span> ${escHtml(_pc.fears)}</div>` : ""}
+    `;
+  }
+
+  if (!sheetEl) return;
+  if (!_sheet || !_sheet.name) {
+    sheetEl.innerHTML = '<span class="muted">No character sheet yet. Rules mode will work better once one is added.</span>';
     return;
   }
-  el.innerHTML = `
-    <div class="pc-card-name">${escHtml(_pc.name)}</div>
-    ${_pc.personality ? `<div class="pc-card-field"><span class="pc-field-label">Personality:</span> ${escHtml(_pc.personality)}</div>` : ""}
-    ${_pc.background  ? `<div class="pc-card-field"><span class="pc-field-label">Background:</span> ${escHtml(_pc.background)}</div>` : ""}
-    ${_pc.wants       ? `<div class="pc-card-field"><span class="pc-field-label">Wants:</span> ${escHtml(_pc.wants)}</div>` : ""}
-    ${_pc.fears       ? `<div class="pc-card-field"><span class="pc-field-label">Fears:</span> ${escHtml(_pc.fears)}</div>` : ""}
+  const abilities = _sheet.abilities || {};
+  const abilityLine = ["strength","dexterity","constitution","intelligence","wisdom","charisma"]
+    .map(k => `${k.slice(0,3).toUpperCase()} ${abilities[k] ?? 10}`)
+    .join(" · ");
+  const topSkills = Object.entries(_sheet.skill_modifiers || {}).slice(0, 4)
+    .map(([k,v]) => `${k} ${v >= 0 ? "+" : ""}${v}`).join(" · ");
+  sheetEl.innerHTML = `
+    <div class="pc-card-name">Rules Sheet</div>
+    <div class="pc-card-field"><span class="pc-field-label">Class:</span> ${escHtml(_sheet.character_class || "Adventurer")} ${_sheet.level ? `(Level ${_sheet.level})` : ""}</div>
+    <div class="pc-card-field"><span class="pc-field-label">Ancestry:</span> ${escHtml(_sheet.ancestry || "Unspecified")}</div>
+    <div class="pc-card-field"><span class="pc-field-label">HP / AC:</span> ${_sheet.current_hp}/${_sheet.max_hp} HP · AC ${_sheet.armor_class}</div>
+    <div class="pc-card-field"><span class="pc-field-label">Abilities:</span> ${escHtml(abilityLine)}</div>
+    ${topSkills ? `<div class="pc-card-field"><span class="pc-field-label">Top Skills:</span> ${escHtml(topSkills)}</div>` : ""}
   `;
 }
 
@@ -1235,6 +1260,25 @@ function openEditPc() {
   document.getElementById("edit-pc-wants").value = _pc?.wants || "";
   document.getElementById("edit-pc-fears").value = _pc?.fears || "";
   document.getElementById("edit-pc-how-seen").value = _pc?.how_seen || "";
+  document.getElementById("sheet-ancestry").value = _sheet?.ancestry || "";
+  document.getElementById("sheet-class").value = _sheet?.character_class || "";
+  document.getElementById("sheet-level").value = _sheet?.level || 1;
+  document.getElementById("sheet-prof").value = _sheet?.proficiency_bonus || 2;
+  document.getElementById("sheet-current-hp").value = _sheet?.current_hp || 10;
+  document.getElementById("sheet-max-hp").value = _sheet?.max_hp || 10;
+  document.getElementById("sheet-temp-hp").value = _sheet?.temp_hp || 0;
+  document.getElementById("sheet-ac").value = _sheet?.armor_class || 10;
+  document.getElementById("sheet-speed").value = _sheet?.speed || 30;
+  const abilities = _sheet?.abilities || {};
+  document.getElementById("sheet-str").value = abilities.strength ?? 10;
+  document.getElementById("sheet-dex").value = abilities.dexterity ?? 10;
+  document.getElementById("sheet-con").value = abilities.constitution ?? 10;
+  document.getElementById("sheet-int").value = abilities.intelligence ?? 10;
+  document.getElementById("sheet-wis").value = abilities.wisdom ?? 10;
+  document.getElementById("sheet-cha").value = abilities.charisma ?? 10;
+  document.getElementById("sheet-skills").value = JSON.stringify(_sheet?.skill_modifiers || {}, null, 2);
+  document.getElementById("sheet-saves").value = JSON.stringify(_sheet?.save_modifiers || {}, null, 2);
+  document.getElementById("sheet-notes").value = _sheet?.notes || "";
 
   // Render dev log
   const logList = document.getElementById("pc-dev-log-list");
@@ -1297,6 +1341,42 @@ async function savePc() {
       method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
     });
     _pc = await res.json();
+    let skillModifiers = {};
+    let saveModifiers = {};
+    try { skillModifiers = JSON.parse(document.getElementById("sheet-skills").value.trim() || "{}"); }
+    catch { throw new Error("Skill modifiers must be valid JSON"); }
+    try { saveModifiers = JSON.parse(document.getElementById("sheet-saves").value.trim() || "{}"); }
+    catch { throw new Error("Save modifiers must be valid JSON"); }
+    const sheetRes = await fetch(`/api/campaigns/${CAMPAIGN_ID}/character-sheet`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: body.name || "Adventurer",
+        ancestry: document.getElementById("sheet-ancestry").value.trim(),
+        character_class: document.getElementById("sheet-class").value.trim(),
+        background: body.background,
+        level: parseInt(document.getElementById("sheet-level").value) || 1,
+        proficiency_bonus: parseInt(document.getElementById("sheet-prof").value) || 2,
+        abilities: {
+          strength: parseInt(document.getElementById("sheet-str").value) || 10,
+          dexterity: parseInt(document.getElementById("sheet-dex").value) || 10,
+          constitution: parseInt(document.getElementById("sheet-con").value) || 10,
+          intelligence: parseInt(document.getElementById("sheet-int").value) || 10,
+          wisdom: parseInt(document.getElementById("sheet-wis").value) || 10,
+          charisma: parseInt(document.getElementById("sheet-cha").value) || 10
+        },
+        skill_modifiers: skillModifiers,
+        save_modifiers: saveModifiers,
+        current_hp: parseInt(document.getElementById("sheet-current-hp").value) || 10,
+        max_hp: parseInt(document.getElementById("sheet-max-hp").value) || 10,
+        temp_hp: parseInt(document.getElementById("sheet-temp-hp").value) || 0,
+        armor_class: parseInt(document.getElementById("sheet-ac").value) || 10,
+        speed: parseInt(document.getElementById("sheet-speed").value) || 30,
+        notes: document.getElementById("sheet-notes").value.trim()
+      }),
+    });
+    if (!sheetRes.ok) throw new Error(`Character sheet save failed: HTTP ${sheetRes.status}`);
+    _sheet = await sheetRes.json();
     closeModal("pc-modal");
     renderAll();
   } catch (e) { showBanner(`Save failed: ${e.message}`, "error"); }

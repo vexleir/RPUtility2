@@ -38,6 +38,24 @@
         </select>
       </div>
 
+      <div class="wb-grid-2">
+        <div class="form-group">
+          <label for="play-mode-select">Play Style</label>
+          <select id="play-mode-select">
+            <option value="narrative">Narrative Campaign</option>
+            <option value="rules">Rules-Driven Campaign</option>
+          </select>
+          <div class="form-hint">Narrative keeps the current campaign style. Rules-driven prepares the campaign for `d20-fantasy-core` support.</div>
+        </div>
+        <div class="form-group">
+          <label for="system-pack-select">System Pack</label>
+          <select id="system-pack-select">
+            <option value="">No system pack</option>
+          </select>
+          <div class="form-hint">You can attach a shared JSON rulebook later. For now, `d20-fantasy-core` is the built-in demo pack.</div>
+        </div>
+      </div>
+
       <!-- Mode tabs -->
       <div class="tab-bar" style="margin-bottom:16px">
         <button type="button" class="tab-btn active" onclick="switchCreateMode('describe')">✍ Describe World</button>
@@ -108,6 +126,9 @@
         <div style="display:flex;gap:12px;margin-top:8px">
           <button class="btn btn-primary" onclick="createEmptyCampaign()" style="flex:1;justify-content:center">
             ☐ Create Empty Campaign
+          </button>
+          <button class="btn" onclick="createDemoCampaign()" style="justify-content:center">
+            🎲 Create Demo Campaign
           </button>
           <a href="/" class="btn" style="text-decoration:none">Cancel</a>
         </div>

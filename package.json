@@ -1,0 +1,7 @@
+{
+  "name": "rputility2-tools",
+  "private": true,
+  "scripts": {
+    "check:frontend": "node tools/validate_frontend.mjs"
+  }
+}

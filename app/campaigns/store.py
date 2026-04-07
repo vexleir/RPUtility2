@@ -10,7 +10,7 @@ from datetime import datetime, UTC
 
 from app.core.database import get_connection, json_encode, json_decode
 from app.core.models import (
-    Campaign, StyleGuide, GenSettings,
+    Campaign, StyleGuide, GenSettings, PlayMode,
     PlayerCharacter, PcDevEntry,
     CampaignWorldFact,
     CampaignPlace,
@@ -34,16 +34,22 @@ class CampaignStore:
         self._db = db_path
 
     def create(self, name: str, model_name: str | None = None,
-               style_guide: StyleGuide | None = None) -> Campaign:
+               style_guide: StyleGuide | None = None,
+               play_mode: PlayMode = PlayMode.NARRATIVE,
+               system_pack: str | None = None,
+               feature_flags: dict[str, bool] | None = None) -> Campaign:
         now = _now()
         sg = style_guide or StyleGuide()
         c = Campaign(name=name, model_name=model_name, style_guide=sg,
+                     play_mode=play_mode, system_pack=system_pack,
+                     feature_flags=feature_flags or {},
                      created_at=now, updated_at=now)
         with get_connection(self._db) as conn:
             conn.execute(
-                "INSERT INTO campaigns (id,name,model_name,style_guide,gen_settings,notes,created_at,updated_at) "
-                "VALUES (?,?,?,?,?,?,?,?)",
-                (c.id, c.name, c.model_name,
+                "INSERT INTO campaigns (id,name,model_name,play_mode,system_pack,feature_flags,style_guide,gen_settings,notes,created_at,updated_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                (c.id, c.name, c.model_name, c.play_mode.value, c.system_pack,
+                 json_encode(c.feature_flags),
                  json_encode(sg.model_dump()),
                  json_encode(c.gen_settings.model_dump()),
                  c.notes,
@@ -75,8 +81,9 @@ class CampaignStore:
         c.updated_at = _now()
         with get_connection(self._db) as conn:
             conn.execute(
-                "UPDATE campaigns SET name=?,model_name=?,summary_model_name=?,style_guide=?,gen_settings=?,notes=?,cover_image=?,updated_at=? WHERE id=?",
-                (c.name, c.model_name, c.summary_model_name,
+                "UPDATE campaigns SET name=?,model_name=?,summary_model_name=?,play_mode=?,system_pack=?,feature_flags=?,style_guide=?,gen_settings=?,notes=?,cover_image=?,updated_at=? WHERE id=?",
+                (c.name, c.model_name, c.summary_model_name, c.play_mode.value,
+                 c.system_pack, json_encode(c.feature_flags),
                  json_encode(c.style_guide.model_dump()),
                  json_encode(c.gen_settings.model_dump()),
                  c.notes, c.cover_image,
@@ -99,6 +106,9 @@ def _row_to_campaign(row) -> Campaign:
         name=row["name"],
         model_name=row["model_name"],
         summary_model_name=row["summary_model_name"] if "summary_model_name" in keys else None,
+        play_mode=PlayMode(row["play_mode"]) if "play_mode" in keys and row["play_mode"] else PlayMode.NARRATIVE,
+        system_pack=row["system_pack"] if "system_pack" in keys else None,
+        feature_flags=json_decode(row["feature_flags"]) if "feature_flags" in keys and row["feature_flags"] else {},
         style_guide=StyleGuide(**sg_raw) if sg_raw else StyleGuide(),
         gen_settings=GenSettings(**{k: v for k, v in gs_raw.items() if k in GenSettings.model_fields}) if gs_raw else GenSettings(),
         notes=row["notes"] if "notes" in keys else "",

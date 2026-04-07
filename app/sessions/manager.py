@@ -11,8 +11,8 @@ import sqlite3
 from datetime import datetime, UTC
 from typing import Optional
 
-from app.core.database import get_connection
-from app.core.models import Session, ConversationTurn
+from app.core.database import get_connection, json_encode, json_decode
+from app.core.models import Session, ConversationTurn, PlayMode
 
 
 class SessionManager:
@@ -31,6 +31,9 @@ class SessionManager:
         lorebook_name: Optional[str] = None,
         model_name: Optional[str] = None,
         scenario_text: Optional[str] = None,
+        play_mode: PlayMode = PlayMode.LEGACY,
+        system_pack: Optional[str] = None,
+        feature_flags: dict[str, bool] | None = None,
     ) -> Session:
         session = Session(
             name=name,
@@ -38,19 +41,26 @@ class SessionManager:
             lorebook_name=lorebook_name,
             model_name=model_name,
             scenario_text=scenario_text,
+            play_mode=play_mode,
+            system_pack=system_pack,
+            feature_flags=feature_flags or {},
         )
         with self._conn() as conn:
             conn.execute(
                 """INSERT INTO sessions
                      (id, name, character_name, lorebook_name, model_name,
+                      play_mode, system_pack, feature_flags,
                       created_at, last_active, turn_count, scenario_text)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     session.id,
                     session.name,
                     session.character_name,
                     session.lorebook_name,
                     session.model_name,
+                    session.play_mode.value,
+                    session.system_pack,
+                    json_encode(session.feature_flags),
                     session.created_at.isoformat(),
                     session.last_active.isoformat(),
                     session.turn_count,
@@ -224,16 +234,20 @@ class SessionManager:
 # ── Row → model helpers ───────────────────────────────────────────────────────
 
 def _row_to_session(row: sqlite3.Row) -> Session:
+    keys = row.keys() if hasattr(row, "keys") else []
     return Session(
         id=row["id"],
         name=row["name"],
         character_name=row["character_name"],
         lorebook_name=row["lorebook_name"],
         model_name=row["model_name"],
+        play_mode=PlayMode(row["play_mode"]) if "play_mode" in keys and row["play_mode"] else PlayMode.LEGACY,
+        system_pack=row["system_pack"] if "system_pack" in keys else None,
+        feature_flags=json_decode(row["feature_flags"]) if "feature_flags" in keys and row["feature_flags"] else {},
         created_at=datetime.fromisoformat(row["created_at"]),
         last_active=datetime.fromisoformat(row["last_active"]),
         turn_count=row["turn_count"],
-        scenario_text=row["scenario_text"] if "scenario_text" in row.keys() else None,
+        scenario_text=row["scenario_text"] if "scenario_text" in keys else None,
     )
 
 
