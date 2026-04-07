@@ -2,6 +2,7 @@
   "name": "rputility2-tools",
   "private": true,
   "scripts": {
-    "check:frontend": "node tools/validate_frontend.mjs"
+    "check:frontend": "node tools/validate_frontend.mjs",
+    "verify": "powershell -ExecutionPolicy Bypass -File scripts/verify.ps1"
   }
 }

@@ -45,6 +45,7 @@ from app.characters.store import CharacterSheetStore
 from app.rules.registry import list_system_packs, list_rulebooks, get_system_pack
 from app.rules.store import RulebookStore
 from app.rules.resolution import resolve_d20_check
+from app.rules.sheet_state import apply_sheet_state_change
 from app.rules.action_log import ActionLogStore
 
 log = logging.getLogger("rp_utility")
@@ -265,6 +266,15 @@ class ResolveCheckRequest(BaseModel):
     roll_expression: str = "d20"
     advantage_state: str = "normal"
     reason: str = ""
+
+
+class AdjustCharacterSheetStateRequest(BaseModel):
+    damage: int = 0
+    healing: int = 0
+    temp_hp_delta: int = 0
+    add_conditions: list[str] = []
+    remove_conditions: list[str] = []
+    notes_append: str = ""
 
 
 # ── Campaign CRUD ──────────────────────────────────────────────────────────────
@@ -2431,6 +2441,58 @@ def save_character_sheet(campaign_id: str, req: SaveCharacterSheetRequest):
         notes=req.notes,
     )
     return _sheet_dict(sheet)
+
+
+@router.post("/{campaign_id}/character-sheet/adjust")
+def adjust_character_sheet_state(campaign_id: str, req: AdjustCharacterSheetStateRequest):
+    campaign = _require_campaign(campaign_id)
+    sheet = _sheets().get_for_owner(campaign_id, "player", "player")
+    if not sheet:
+        raise HTTPException(404, "Character sheet not found")
+
+    updated, summary = apply_sheet_state_change(
+        sheet,
+        damage=max(0, req.damage),
+        healing=max(0, req.healing),
+        temp_hp_delta=req.temp_hp_delta,
+        add_conditions=req.add_conditions,
+        remove_conditions=req.remove_conditions,
+        notes_append=req.notes_append,
+    )
+    saved = _sheets().save_for_owner(
+        campaign_id,
+        "player",
+        "player",
+        current_hp=updated.current_hp,
+        temp_hp=updated.temp_hp,
+        conditions=updated.conditions,
+        notes=updated.notes,
+    )
+    scene = _scenes().get_active(campaign_id)
+    actor_name = saved.name or "Player"
+    _action_logs().save(ActionLogEntry(
+        campaign_id=campaign_id,
+        scene_id=scene.id if scene else None,
+        actor_name=actor_name,
+        action_type="sheet_update",
+        source="character_sheet",
+        summary=f"{actor_name} {summary}.",
+        details={
+            "play_mode": campaign.play_mode.value if hasattr(campaign.play_mode, "value") else str(campaign.play_mode),
+            "current_hp": saved.current_hp,
+            "max_hp": saved.max_hp,
+            "temp_hp": saved.temp_hp,
+            "conditions": saved.conditions,
+            "damage": max(0, req.damage),
+            "healing": max(0, req.healing),
+            "temp_hp_delta": req.temp_hp_delta,
+            "notes_append": req.notes_append,
+        },
+    ))
+    return {
+        "sheet": _sheet_dict(saved),
+        "summary": summary,
+    }
 
 
 @router.post("/{campaign_id}/checks/resolve")

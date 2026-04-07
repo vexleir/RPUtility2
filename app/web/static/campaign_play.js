@@ -1354,8 +1354,9 @@ function renderSidebar() {
 function renderRulesSidebar() {
   const section = document.getElementById("rules-sheet-section");
   const button = document.getElementById("resolve-check-btn");
+  const stateButton = document.getElementById("sheet-state-btn");
   const container = document.getElementById("sidebar-sheet");
-  if (!container || !section || !button) return;
+  if (!container || !section || !button || !stateButton) return;
 
   const isRulesMode = _campaign?.play_mode === "rules" && _campaign?.system_pack === "d20-fantasy-core";
   section.style.display = isRulesMode ? "" : "none";
@@ -1364,10 +1365,12 @@ function renderRulesSidebar() {
   if (!_sheet || !_sheet.name) {
     container.innerHTML = '<div class="muted" style="font-size:0.8rem">No character sheet yet. Add one from the campaign overview to get deterministic checks.</div>';
     button.disabled = true;
+    stateButton.disabled = true;
     return;
   }
 
   button.disabled = false;
+  stateButton.disabled = false;
   const abilities = _sheet.abilities || {};
   const abilityLine = ["strength", "dexterity", "constitution", "intelligence", "wisdom", "charisma"]
     .map(key => `${key.slice(0, 3).toUpperCase()} ${abilities[key] ?? 10}`)
@@ -1521,6 +1524,27 @@ function openResolveCheckModal() {
   setTimeout(() => document.getElementById("check-source").focus(), 50);
 }
 
+function openSheetStateModal() {
+  if (_campaign?.play_mode !== "rules") {
+    showToast("Sheet state updates are only available in rules mode.", "info");
+    return;
+  }
+  if (!_sheet || !_sheet.name) {
+    showToast("Create a character sheet on the campaign overview first.", "warning");
+    return;
+  }
+  document.getElementById("sheet-state-damage").value = "0";
+  document.getElementById("sheet-state-healing").value = "0";
+  document.getElementById("sheet-state-temp").value = "0";
+  document.getElementById("sheet-state-add-conditions").value = "";
+  document.getElementById("sheet-state-remove-conditions").value = "";
+  document.getElementById("sheet-state-note").value = "";
+  document.getElementById("sheet-state-current").textContent =
+    `HP ${_sheet.current_hp}/${_sheet.max_hp}${_sheet.temp_hp ? ` (+${_sheet.temp_hp} temp)` : ""} · Conditions: ${(_sheet.conditions || []).join(", ") || "None"}`;
+  openModal("sheet-state-modal");
+  setTimeout(() => document.getElementById("sheet-state-damage").focus(), 50);
+}
+
 async function submitResolveCheck() {
   const source = document.getElementById("check-source").value.trim();
   const difficulty = parseInt(document.getElementById("check-difficulty").value, 10) || 15;
@@ -1559,6 +1583,38 @@ async function submitResolveCheck() {
   }
 }
 
+async function submitSheetStateUpdate() {
+  const submitBtn = document.getElementById("sheet-state-submit");
+  const damage = parseInt(document.getElementById("sheet-state-damage").value, 10) || 0;
+  const healing = parseInt(document.getElementById("sheet-state-healing").value, 10) || 0;
+  const temp_hp_delta = parseInt(document.getElementById("sheet-state-temp").value, 10) || 0;
+  const add_conditions = splitCsv(document.getElementById("sheet-state-add-conditions").value);
+  const remove_conditions = splitCsv(document.getElementById("sheet-state-remove-conditions").value);
+  const notes_append = document.getElementById("sheet-state-note").value.trim();
+
+  submitBtn.disabled = true;
+  submitBtn.textContent = "Applying...";
+  try {
+    const res = await fetch(`/api/campaigns/${CAMPAIGN_ID}/character-sheet/adjust`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ damage, healing, temp_hp_delta, add_conditions, remove_conditions, notes_append }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+    _sheet = data.sheet || _sheet;
+    await refreshActionLogs();
+    renderSidebar();
+    closeModal("sheet-state-modal");
+    showToast(data.summary || "Updated sheet state.", "success");
+  } catch (e) {
+    showError(`Could not update sheet state: ${e.message}`);
+  } finally {
+    submitBtn.disabled = false;
+    submitBtn.textContent = "Apply";
+  }
+}
+
 async function refreshActionLogs() {
   try {
     const res = await fetch(`/api/campaigns/${CAMPAIGN_ID}/action-logs?n=20`);
@@ -1567,6 +1623,13 @@ async function refreshActionLogs() {
   } catch (e) {
     showError(`Could not refresh action log: ${e.message}`);
   }
+}
+
+function splitCsv(raw) {
+  return raw
+    .split(",")
+    .map(part => part.trim())
+    .filter(Boolean);
 }
 
 // ── Scene search ──────────────────────────────────────────────────────────────

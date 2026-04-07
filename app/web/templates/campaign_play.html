@@ -188,7 +188,10 @@
       <div class="sidebar-section" id="rules-sheet-section">
         <div class="sidebar-section-title" style="display:flex;justify-content:space-between;align-items:center">
           <span>Rules Sheet</span>
-          <button class="btn btn-ghost btn-sm" id="resolve-check-btn" onclick="openResolveCheckModal()">Resolve Check</button>
+          <div style="display:flex;gap:6px;align-items:center">
+            <button class="btn btn-ghost btn-sm" id="sheet-state-btn" onclick="openSheetStateModal()">Update State</button>
+            <button class="btn btn-ghost btn-sm" id="resolve-check-btn" onclick="openResolveCheckModal()">Resolve Check</button>
+          </div>
         </div>
         <div id="sidebar-sheet" class="sidebar-content"></div>
       </div>
@@ -358,6 +361,56 @@
       <div class="modal-footer">
         <button class="btn btn-primary" id="resolve-check-submit" onclick="submitResolveCheck()">Resolve</button>
         <button class="btn" onclick="closeModal('resolve-check-modal')">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="sheet-state-modal" class="modal-backdrop hidden">
+    <div class="modal" style="max-width:560px">
+      <div class="modal-header">
+        <span>Update Character State</span>
+        <button class="modal-close" onclick="closeModal('sheet-state-modal')">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="muted" style="margin-bottom:12px">
+          Apply damage, healing, temp HP changes, and condition updates to the current player sheet.
+        </p>
+        <div class="wb-grid-2">
+          <div class="form-group">
+            <label>Damage</label>
+            <input type="number" id="sheet-state-damage" class="wb-field" min="0" value="0">
+          </div>
+          <div class="form-group">
+            <label>Healing</label>
+            <input type="number" id="sheet-state-healing" class="wb-field" min="0" value="0">
+          </div>
+        </div>
+        <div class="wb-grid-2">
+          <div class="form-group">
+            <label>Temp HP Delta</label>
+            <input type="number" id="sheet-state-temp" class="wb-field" value="0">
+          </div>
+          <div class="form-group">
+            <label>Current Snapshot</label>
+            <div id="sheet-state-current" class="muted" style="padding-top:32px"></div>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Add Conditions <span class="dim">(comma separated)</span></label>
+          <input type="text" id="sheet-state-add-conditions" class="wb-field" placeholder="e.g. poisoned, frightened">
+        </div>
+        <div class="form-group">
+          <label>Remove Conditions <span class="dim">(comma separated)</span></label>
+          <input type="text" id="sheet-state-remove-conditions" class="wb-field" placeholder="e.g. prone">
+        </div>
+        <div class="form-group">
+          <label>Note <span class="dim">(optional)</span></label>
+          <textarea id="sheet-state-note" class="wb-field" rows="3" placeholder="e.g. Ogre's club smashed through the shield guard."></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-primary" id="sheet-state-submit" onclick="submitSheetStateUpdate()">Apply</button>
+        <button class="btn" onclick="closeModal('sheet-state-modal')">Cancel</button>
       </div>
     </div>
   </div>
