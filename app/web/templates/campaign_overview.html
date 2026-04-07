@@ -1,0 +1,948 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Campaign — RP Utility</title>
+  <script src="/static/theme.js?v={{CACHE_VER}}"></script>
+  <link rel="stylesheet" href="/static/style.css?v={{CACHE_VER}}">
+</head>
+<body class="campaign-overview-layout">
+
+  <nav class="topnav">
+    <div class="topnav-title">🎭 <span>RP</span> Utility</div>
+    <div class="topnav-sub"><a href="/" class="muted" style="text-decoration:none">← Home</a></div>
+    <div class="topnav-right" style="display:flex;align-items:center;gap:12px">
+      <button class="btn btn-primary" id="play-btn" onclick="startPlay()">▶ Play</button>
+      <select id="theme-select" class="theme-select" onchange="setTheme(this.value)" title="Color theme"></select>
+      <div class="status-dot" id="status-dot"></div>
+      <span id="status-label" class="muted">Checking…</span>
+    </div>
+  </nav>
+
+  <div id="banner-container" style="padding: 0 28px; margin-top: 16px;"></div>
+
+  <!-- ── Header ───────────────────────────────────────────────────── -->
+  <div class="campaign-header">
+    <div style="display:flex;align-items:center;gap:14px">
+      <div id="campaign-cover-wrap" class="campaign-cover-wrap">
+        <img id="campaign-cover-img" class="campaign-cover-img hidden" alt="Campaign cover">
+        <div id="campaign-cover-placeholder" class="campaign-cover-placeholder" onclick="openImgGen('campaign')" title="Generate campaign image">🎨</div>
+      </div>
+      <div>
+        <h1 id="campaign-title" style="margin:0">Loading…</h1>
+        <div class="muted" id="campaign-model" style="margin-top:4px;font-size:0.85rem"></div>
+      </div>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn btn-sm" onclick="openImgGen('campaign')">🎨 Campaign Image</button>
+      <button class="btn btn-sm" onclick="openSearchModal()">🔍 Search</button>
+      <button class="btn btn-sm" onclick="openStatsModal()">📊 Stats</button>
+      <button class="btn btn-sm" onclick="exportMarkdown()">⬇ Export MD</button>
+      <button class="btn btn-sm" onclick="exportJson()">⬇ Backup</button>
+      <button class="btn btn-sm" onclick="openRestoreModal()">⬆ Restore</button>
+      <button class="btn btn-sm" onclick="exportTemplate()">⬇ Export Template</button>
+      <button class="btn btn-sm" onclick="openTemplateModal()">📋 Save as Template</button>
+      <button class="btn btn-sm" onclick="openEditCampaign()">✎ Edit Settings</button>
+      <button class="btn btn-sm btn-danger" onclick="confirmDeleteCampaign()">Delete Campaign</button>
+    </div>
+  </div>
+
+  <!-- ── Body tabs ─────────────────────────────────────────────────── -->
+  <div class="campaign-tabs-bar">
+    <button class="campaign-tab active" data-tab="world" onclick="switchTab('world')">World Document</button>
+    <button class="campaign-tab" data-tab="scenes" onclick="switchTab('scenes')">Scenes</button>
+    <button class="campaign-tab" data-tab="chronicle" onclick="switchTab('chronicle')">Chronicle</button>
+  </div>
+
+  <!-- ── Tab: World Document ────────────────────────────────────────── -->
+  <div id="tab-world" class="campaign-tab-content">
+    <div class="world-doc-layout">
+
+      <!-- Left col: premise + facts + magic -->
+      <div class="world-doc-main">
+
+        <div class="world-section" data-section="premise">
+          <div class="world-section-header">
+            <h3>Premise</h3>
+            <button class="btn btn-sm" onclick="editField('premise')">✎ Edit</button>
+          </div>
+          <div id="world-premise" class="world-prose muted-placeholder">Loading…</div>
+        </div>
+
+        <div class="world-section" data-section="world-facts">
+          <div class="world-section-header">
+            <h3>World Facts</h3>
+            <button class="btn btn-sm" onclick="openEditFact(null)">+ Add</button>
+          </div>
+          <ul id="world-facts-list" class="world-facts-ul"></ul>
+        </div>
+
+        <div class="world-section" data-section="magic">
+          <div class="world-section-header">
+            <h3>Magic / Technology</h3>
+            <button class="btn btn-sm" onclick="editField('magic_system')">✎ Edit</button>
+          </div>
+          <div id="world-magic" class="world-prose muted-placeholder"></div>
+        </div>
+
+      </div>
+
+      <!-- Right col: NPCs, places, threads, factions -->
+      <div class="world-doc-sidebar">
+
+        <!-- Player Character -->
+        <div class="world-section" data-section="player-character">
+          <div class="world-section-header">
+            <h3>Player Character</h3>
+            <div style="display:flex;gap:4px">
+              <button class="btn btn-sm btn-ghost" title="Generate or upload portrait" onclick="openImgGen('pc')">🎨</button>
+              <button class="btn btn-sm" onclick="openEditPc()">✎ Edit</button>
+            </div>
+          </div>
+          <div style="display:flex;gap:12px;align-items:flex-start">
+            <div id="pc-portrait-wrap" style="flex-shrink:0">
+              <img id="pc-portrait-img" class="npc-portrait-avatar hidden" style="width:56px;height:56px" alt="Player character portrait">
+              <div id="pc-portrait-placeholder" class="npc-portrait-avatar" style="width:56px;height:56px;display:flex;align-items:center;justify-content:center;font-size:22px;background:var(--surface2);cursor:pointer" title="Generate or upload portrait" onclick="openImgGen('pc')">🎨</div>
+            </div>
+            <div id="pc-card" class="pc-card muted-placeholder" style="flex:1;min-width:0">No character yet.</div>
+          </div>
+        </div>
+
+        <!-- NPCs -->
+        <div class="world-section" data-section="npcs">
+          <div class="world-section-header">
+            <h3>NPCs</h3>
+            <div style="display:flex;gap:4px">
+              <button class="btn btn-sm" onclick="openImportCardModal()">⬆ Import Card</button>
+              <button class="btn btn-sm" onclick="openEditNpc(null)">+ Add</button>
+            </div>
+          </div>
+          <div id="npcs-list" class="entity-list"></div>
+        </div>
+
+        <!-- Places -->
+        <div class="world-section" data-section="places">
+          <div class="world-section-header">
+            <h3>Places</h3>
+            <button class="btn btn-sm" onclick="openEditPlace(null)">+ Add</button>
+          </div>
+          <div id="places-list" class="entity-list"></div>
+        </div>
+
+        <!-- Narrative Threads -->
+        <div class="world-section" data-section="threads">
+          <div class="world-section-header">
+            <h3>Narrative Threads</h3>
+            <button class="btn btn-sm" onclick="openEditThread(null)">+ Add</button>
+          </div>
+          <div id="threads-list" class="entity-list"></div>
+        </div>
+
+        <!-- Factions -->
+        <div class="world-section" data-section="factions">
+          <div class="world-section-header">
+            <h3>Factions</h3>
+            <button class="btn btn-sm" onclick="openEditFaction(null)">+ Add</button>
+          </div>
+          <div id="factions-list" class="entity-list"></div>
+        </div>
+
+        <!-- NPC Relationships -->
+        <div class="world-section" data-section="relationships">
+          <div class="world-section-header">
+            <h3>NPC Relationships</h3>
+            <button class="btn btn-sm" onclick="openEditRelationship(null)">+ Add</button>
+          </div>
+          <div id="relationships-list" class="entity-list"></div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Tab: Scenes ───────────────────────────────────────────────── -->
+  <div id="tab-scenes" class="campaign-tab-content hidden">
+    <div class="scenes-layout">
+      <div class="scenes-header-row">
+        <h3 style="margin:0">Scene History</h3>
+        <button class="btn btn-primary" onclick="startPlay()">▶ New Scene</button>
+      </div>
+      <div id="scenes-list" class="scenes-list"></div>
+    </div>
+  </div>
+
+  <!-- ── Tab: Chronicle ───────────────────────────────────────────── -->
+  <div id="tab-chronicle" class="campaign-tab-content hidden">
+    <div class="chronicle-layout">
+      <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:8px">
+        <h3 style="margin:0">The Chronicle</h3>
+        <button class="btn btn-sm" id="compress-btn" onclick="openCompressChronicle()" style="display:none">✦ Compress…</button>
+      </div>
+      <p class="muted" style="margin-bottom:20px">The confirmed narrative record of your campaign. Select entries to compress them.</p>
+      <div id="chronicle-list" class="chronicle-list"></div>
+    </div>
+  </div>
+
+  <!-- ── Edit modals ───────────────────────────────────────────────── -->
+
+  <!-- Scene transcript viewer -->
+  <div id="transcript-modal" class="modal-backdrop hidden">
+    <div class="modal" style="max-width:720px;max-height:85vh;display:flex;flex-direction:column">
+      <div class="modal-header">
+        <span id="transcript-modal-title">Scene Transcript</span>
+        <button class="modal-close" onclick="closeModal('transcript-modal')">✕</button>
+      </div>
+      <div class="modal-body" id="transcript-body" style="overflow-y:auto;flex:1"></div>
+      <div class="modal-footer">
+        <button class="btn" onclick="closeModal('transcript-modal')">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Chronicle entry editor -->
+  <div id="chronicle-edit-modal" class="modal-backdrop hidden">
+    <div class="modal" style="max-width:600px">
+      <div class="modal-header">
+        <span>Edit Chronicle Entry</span>
+        <button class="modal-close" onclick="closeModal('chronicle-edit-modal')">✕</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="chronicle-edit-id">
+        <textarea id="chronicle-edit-textarea" rows="14"
+          style="width:100%;box-sizing:border-box;min-height:240px;resize:vertical;font-size:14px;line-height:1.7"></textarea>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-primary" onclick="saveChronicleEdit()">Save</button>
+        <button class="btn" onclick="closeModal('chronicle-edit-modal')">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Chronicle compress selector -->
+  <div id="compress-modal" class="modal-backdrop hidden">
+    <div class="modal" style="max-width:560px">
+      <div class="modal-header">
+        <span>Compress Chronicle Entries</span>
+        <button class="modal-close" onclick="closeModal('compress-modal')">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="muted" style="margin-bottom:12px">Select two or more entries to merge with AI into a single summary.</p>
+        <div id="compress-entry-list"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-primary" onclick="runCompress()">✦ Merge with AI</button>
+        <span class="muted" id="compress-loading" style="display:none;margin-left:8px">Compressing…</span>
+        <button class="btn" onclick="closeModal('compress-modal')">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- World fact editor modal (replaces prompt()) -->
+  <div id="fact-edit-modal" class="modal-backdrop hidden">
+    <div class="modal" style="max-width:560px">
+      <div class="modal-header">
+        <span id="fact-edit-title">World Fact</span>
+        <button class="modal-close" onclick="closeModal('fact-edit-modal')">✕</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="fact-edit-id">
+        <div class="form-group">
+          <label>Fact</label>
+          <textarea id="fact-edit-content" rows="4" style="width:100%;box-sizing:border-box"
+            placeholder="Enter a world fact…"></textarea>
+        </div>
+        <div class="form-group">
+          <label>Category <span class="dim">(optional — e.g. history, geography, politics, magic)</span></label>
+          <input type="text" id="fact-edit-category" style="width:100%;box-sizing:border-box"
+            placeholder="Leave blank for general">
+        </div>
+        <div class="form-group">
+          <label>Priority</label>
+          <select id="fact-edit-priority" style="width:100%;box-sizing:border-box" class="wb-field">
+            <option value="critical">🔴 Critical — always injected, shown first</option>
+            <option value="normal" selected>🟡 Normal — always injected</option>
+            <option value="background">⚪ Background — only when keywords match</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Trigger Keywords <span class="dim">(comma-separated — inject only when these appear in conversation)</span></label>
+          <input type="text" id="fact-edit-keywords" style="width:100%;box-sizing:border-box"
+            placeholder="e.g. dragon, collar, Oren  (leave blank to always inject)">
+          <p class="form-hint" style="margin-top:4px">Background facts only appear in context when a keyword is mentioned. Normal/Critical facts always appear.</p>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-primary" onclick="saveFactEdit()">Save</button>
+        <button class="btn" onclick="closeModal('fact-edit-modal')">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Add NPC Form modal -->
+  <div id="npc-form-modal" class="modal-backdrop hidden">
+    <div class="modal" style="max-width:520px">
+      <div class="modal-header">
+        <span>Add / Edit Form</span>
+        <button class="modal-close" onclick="closeModal('npc-form-modal')">✕</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="npc-form-edit-index">
+        <div class="form-group">
+          <label>Form Label <span class="dim">(e.g. Wolf Form, Corrupted, True Form, Disguise)</span></label>
+          <input type="text" class="wb-field" id="npc-form-label" placeholder="Wolf Form">
+        </div>
+        <div class="form-group"><label>Appearance in this form</label><textarea class="wb-field" id="npc-form-appearance" rows="2" placeholder="Physical description while in this form…"></textarea></div>
+        <div class="form-group"><label>Personality in this form</label><textarea class="wb-field" id="npc-form-personality" rows="2" placeholder="How they think and act in this form…"></textarea></div>
+        <div class="form-group"><label>Current State in this form</label><input type="text" class="wb-field" id="npc-form-state" placeholder="e.g. hunting, dormant, enraged"></div>
+        <div class="form-group">
+          <label>Scene Introduced <span class="dim">(optional scene number)</span></label>
+          <input type="number" class="wb-field" id="npc-form-scene" min="0" placeholder="0">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button id="npc-form-delete-btn" class="btn btn-danger" onclick="deleteNpcForm()" style="margin-right:auto;display:none">Delete</button>
+        <button class="btn btn-primary" onclick="saveNpcForm()">Save Form</button>
+        <button class="btn" onclick="closeModal('npc-form-modal')">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Generic text field editor -->
+  <div id="field-modal" class="modal-backdrop hidden">
+    <div class="modal" style="max-width:600px">
+      <div class="modal-header">
+        <span id="field-modal-title">Edit</span>
+        <button class="modal-close" onclick="closeModal('field-modal')">✕</button>
+      </div>
+      <div class="modal-body">
+        <textarea id="field-modal-textarea" rows="10" style="width:100%;box-sizing:border-box"></textarea>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-primary" onclick="saveField()">Save</button>
+        <button class="btn" onclick="closeModal('field-modal')">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- NPC editor -->
+  <div id="npc-modal" class="modal-backdrop hidden">
+    <div class="modal" style="max-width:660px;max-height:90vh;display:flex;flex-direction:column">
+      <div class="modal-header">
+        <span id="npc-modal-title">NPC</span>
+        <button class="modal-close" onclick="closeModal('npc-modal')">✕</button>
+      </div>
+      <div class="modal-body" style="overflow-y:auto;flex:1">
+        <input type="hidden" id="npc-id">
+
+        <!-- AI generate strip -->
+        <div id="npc-generate-strip" class="npc-generate-strip">
+          <textarea id="npc-generate-desc" class="wb-field" rows="2"
+            placeholder="Describe this NPC… e.g. 'A grizzled dwarf blacksmith who secretly works for the thieves guild'"></textarea>
+          <div style="display:flex;gap:8px;margin-top:6px;align-items:center">
+            <button class="btn btn-primary btn-sm" onclick="generateNpc()">✨ Generate Fields</button>
+            <span id="npc-generate-status" class="muted" style="font-size:0.82rem"></span>
+          </div>
+        </div>
+
+        <div class="wb-grid-2">
+          <div class="form-group"><label>Name</label><input type="text" class="wb-field" id="npc-name"></div>
+          <div class="form-group"><label>Role</label><input type="text" class="wb-field" id="npc-role"></div>
+        </div>
+        <div class="wb-grid-2">
+          <div class="form-group"><label>Gender <span class="dim">(used for portrait generation)</span></label><input type="text" class="wb-field" id="npc-gender" placeholder="e.g. female, male, non-binary"></div>
+          <div class="form-group"><label>Age <span class="dim">(used for portrait generation)</span></label><input type="text" class="wb-field" id="npc-age" placeholder="e.g. 30s, young adult, elderly"></div>
+        </div>
+        <div class="form-group"><label>Appearance</label><textarea class="wb-field" id="npc-appearance" rows="2"></textarea></div>
+        <div class="form-group"><label>Personality</label><textarea class="wb-field" id="npc-personality" rows="2"></textarea></div>
+        <div class="form-group"><label>Relationship to Player</label><input type="text" class="wb-field" id="npc-rel"></div>
+        <div class="wb-grid-2">
+          <div class="form-group"><label>Current Location</label><input type="text" class="wb-field" id="npc-loc"></div>
+          <div class="form-group"><label>Current State</label><input type="text" class="wb-field" id="npc-state"></div>
+        </div>
+        <div class="wb-grid-2">
+          <div class="form-group">
+            <label>Status</label>
+            <select class="wb-field" id="npc-status">
+              <option value="active">Active</option>
+              <option value="fled">Fled</option>
+              <option value="imprisoned">Imprisoned</option>
+              <option value="transformed">Transformed</option>
+              <option value="dead">Dead</option>
+            </select>
+          </div>
+          <div class="form-group"><label>Status Reason <span class="dim">(optional)</span></label><input type="text" class="wb-field" id="npc-status-reason"></div>
+        </div>
+        <div class="form-group"><label>Short-term Goal <span class="dim">(AI-visible)</span></label><input type="text" class="wb-field" id="npc-short-goal"></div>
+        <div class="form-group"><label>Long-term Goal <span class="dim">(AI-visible)</span></label><input type="text" class="wb-field" id="npc-long-goal"></div>
+        <div class="form-group"><label>Secrets <span class="dim">(AI-only, never shown in UI)</span></label><textarea class="wb-field" id="npc-secrets" rows="2"></textarea></div>
+        <div class="form-group"><label>History with Player <span class="dim">(relationship log — AI-visible)</span></label><textarea class="wb-field" id="npc-history" rows="2" placeholder="Accumulated relationship history across scenes…"></textarea></div>
+
+        <!-- Forms / Transformations -->
+        <div class="npc-forms-section" style="margin-top:14px">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+            <label style="margin:0;font-weight:600">Forms &amp; Transformations</label>
+            <button class="btn btn-sm" type="button" onclick="openAddNpcForm()">+ Add Form</button>
+          </div>
+          <div style="margin-bottom:8px;display:flex;align-items:center;gap:8px">
+            <label style="margin:0;font-size:0.85rem;color:var(--text-muted)">Active form:</label>
+            <select class="wb-field" id="npc-active-form" style="flex:1;font-size:0.85rem">
+              <option value="">Base form (default)</option>
+            </select>
+          </div>
+          <div id="npc-forms-list" class="npc-forms-list"></div>
+        </div>
+
+        <!-- Dev log -->
+        <div class="dev-log-section" style="margin-top:12px">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+            <label style="margin:0;font-weight:600">Development Log</label>
+            <button class="btn btn-sm" type="button" onclick="openNpcDevLogAdd()">+ Add Entry</button>
+          </div>
+          <div id="npc-dev-log-list" class="dev-log-list"></div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-primary" onclick="saveNpc()">Save</button>
+        <button id="npc-delete-btn" class="btn btn-danger" onclick="deleteNpc()" style="margin-right:auto">Delete</button>
+        <button class="btn" onclick="closeModal('npc-modal')">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- NPC dev log entry adder -->
+  <div id="npc-devlog-modal" class="modal-backdrop hidden">
+    <div class="modal" style="max-width:480px">
+      <div class="modal-header">
+        <span>Add NPC Development Note</span>
+        <button class="modal-close" onclick="closeModal('npc-devlog-modal')">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group"><label>Note</label><textarea class="wb-field" id="npc-devlog-note" rows="3" placeholder="What changed or was revealed about this NPC?"></textarea></div>
+        <div class="form-group"><label>Scene # <span class="dim">(optional)</span></label><input type="number" class="wb-field" id="npc-devlog-scene" min="0" value="0"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-primary" onclick="saveNpcDevLog()">Add</button>
+        <button class="btn" onclick="closeModal('npc-devlog-modal')">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Place editor -->
+  <div id="place-modal" class="modal-backdrop hidden">
+    <div class="modal" style="max-width:560px">
+      <div class="modal-header">
+        <span id="place-modal-title">Place</span>
+        <button class="modal-close" onclick="closeModal('place-modal')">✕</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="place-id">
+        <div class="form-group"><label>Name</label><input type="text" class="wb-field" id="place-name"></div>
+        <div class="form-group"><label>Description</label><textarea class="wb-field" id="place-desc" rows="3"></textarea></div>
+        <div class="form-group"><label>Current State</label><textarea class="wb-field" id="place-state" rows="2"></textarea></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-primary" onclick="savePlace()">Save</button>
+        <button id="place-delete-btn" class="btn btn-danger" onclick="deletePlace()" style="margin-right:auto">Delete</button>
+        <button class="btn" onclick="closeModal('place-modal')">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Thread editor -->
+  <div id="thread-modal" class="modal-backdrop hidden">
+    <div class="modal" style="max-width:560px">
+      <div class="modal-header">
+        <span id="thread-modal-title">Narrative Thread</span>
+        <button class="modal-close" onclick="closeModal('thread-modal')">✕</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="thread-id">
+        <div class="form-group"><label>Title</label><input type="text" class="wb-field" id="thread-title"></div>
+        <div class="form-group"><label>Description / Tension</label><textarea class="wb-field" id="thread-desc" rows="4"></textarea></div>
+        <div class="form-group">
+          <label>Status</label>
+          <select class="wb-field" id="thread-status">
+            <option value="active">Active</option>
+            <option value="resolved">Resolved</option>
+            <option value="dormant">Dormant</option>
+          </select>
+        </div>
+        <div class="form-group"><label>Resolution <span class="dim">(if resolved)</span></label><textarea class="wb-field" id="thread-resolution" rows="2"></textarea></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-primary" onclick="saveThread()">Save</button>
+        <button id="thread-delete-btn" class="btn btn-danger" onclick="deleteThread()" style="margin-right:auto">Delete</button>
+        <button class="btn" onclick="closeModal('thread-modal')">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Faction editor -->
+  <div id="faction-modal" class="modal-backdrop hidden">
+    <div class="modal" style="max-width:560px">
+      <div class="modal-header">
+        <span id="faction-modal-title">Faction</span>
+        <button class="modal-close" onclick="closeModal('faction-modal')">✕</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="faction-id">
+        <div class="form-group"><label>Name</label><input type="text" class="wb-field" id="faction-name"></div>
+        <div class="form-group"><label>Description</label><textarea class="wb-field" id="faction-desc" rows="2"></textarea></div>
+        <div class="form-group"><label>Goals</label><textarea class="wb-field" id="faction-goals" rows="2"></textarea></div>
+        <div class="form-group"><label>Methods</label><textarea class="wb-field" id="faction-methods" rows="2"></textarea></div>
+        <div class="form-group"><label>Standing with Player <span class="dim">(e.g. Trusted, Neutral, Hostile)</span></label><input type="text" class="wb-field" id="faction-standing"></div>
+        <div class="form-group"><label>Relationship History <span class="dim">(context for AI)</span></label><textarea class="wb-field" id="faction-rel-notes" rows="2"></textarea></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-primary" onclick="saveFaction()">Save</button>
+        <button id="faction-delete-btn" class="btn btn-danger" onclick="deleteFaction()" style="margin-right:auto">Delete</button>
+        <button class="btn" onclick="closeModal('faction-modal')">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- PC editor -->
+  <div id="pc-modal" class="modal-backdrop hidden">
+    <div class="modal" style="max-width:660px;max-height:90vh;display:flex;flex-direction:column">
+      <div class="modal-header">
+        <span>Player Character</span>
+        <button class="modal-close" onclick="closeModal('pc-modal')">✕</button>
+      </div>
+      <div class="modal-body" style="overflow-y:auto;flex:1">
+        <div class="wb-grid-2">
+          <div class="form-group"><label>Name</label><input type="text" class="wb-field" id="edit-pc-name"></div>
+          <div class="form-group"><label>Role / Title</label><input type="text" class="wb-field" id="edit-pc-role"></div>
+        </div>
+        <div class="form-group"><label>Appearance</label><textarea class="wb-field" id="edit-pc-appearance" rows="2"></textarea></div>
+        <div class="form-group"><label>Personality</label><textarea class="wb-field" id="edit-pc-personality" rows="2"></textarea></div>
+        <div class="form-group"><label>Background</label><textarea class="wb-field" id="edit-pc-background" rows="3"></textarea></div>
+        <div class="wb-grid-2">
+          <div class="form-group"><label>Wants</label><textarea class="wb-field" id="edit-pc-wants" rows="2"></textarea></div>
+          <div class="form-group"><label>Fears</label><textarea class="wb-field" id="edit-pc-fears" rows="2"></textarea></div>
+        </div>
+        <div class="form-group"><label>How Others See Them</label><textarea class="wb-field" id="edit-pc-how-seen" rows="2"></textarea></div>
+
+        <!-- Dev log -->
+        <div class="dev-log-section" style="margin-top:12px">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+            <label style="margin:0;font-weight:600">Development Log</label>
+            <button class="btn btn-sm" type="button" onclick="openPcDevLogAdd()">+ Add Entry</button>
+          </div>
+          <div id="pc-dev-log-list" class="dev-log-list"></div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-primary" onclick="savePc()">Save</button>
+        <button class="btn" onclick="closeModal('pc-modal')">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- PC dev log entry adder -->
+  <div id="pc-devlog-modal" class="modal-backdrop hidden">
+    <div class="modal" style="max-width:480px">
+      <div class="modal-header">
+        <span>Add Character Development Note</span>
+        <button class="modal-close" onclick="closeModal('pc-devlog-modal')">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group"><label>Note</label><textarea class="wb-field" id="pc-devlog-note" rows="3" placeholder="What changed, was learned, or developed for this character?"></textarea></div>
+        <div class="form-group"><label>Scene # <span class="dim">(optional)</span></label><input type="number" class="wb-field" id="pc-devlog-scene" min="0" value="0"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-primary" onclick="savePcDevLog()">Add</button>
+        <button class="btn" onclick="closeModal('pc-devlog-modal')">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- NPC Relationship editor -->
+  <div id="rel-modal" class="modal-backdrop hidden">
+    <div class="modal" style="max-width:560px">
+      <div class="modal-header">
+        <span id="rel-modal-title">NPC Relationship</span>
+        <button class="modal-close" onclick="closeModal('rel-modal')">✕</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="rel-id">
+        <div class="wb-grid-2">
+          <div class="form-group">
+            <label>NPC A</label>
+            <select class="wb-field" id="rel-npc-a"></select>
+          </div>
+          <div class="form-group">
+            <label>NPC B</label>
+            <select class="wb-field" id="rel-npc-b"></select>
+          </div>
+        </div>
+        <div class="form-group"><label>Dynamic <span class="dim">(e.g. rivals, old friends, mentor/apprentice)</span></label><input type="text" class="wb-field" id="rel-dynamic"></div>
+        <div class="wb-grid-2">
+          <div class="form-group"><label>Trust <span class="dim">(e.g. High, Low)</span></label><input type="text" class="wb-field" id="rel-trust"></div>
+          <div class="form-group"><label>Hostility <span class="dim">(e.g. None, Simmering)</span></label><input type="text" class="wb-field" id="rel-hostility"></div>
+        </div>
+        <div class="form-group"><label>Shared History</label><textarea class="wb-field" id="rel-history" rows="3"></textarea></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-primary" onclick="saveRelationship()">Save</button>
+        <button id="rel-delete-btn" class="btn btn-danger" onclick="deleteRelationship()" style="margin-right:auto">Delete</button>
+        <button class="btn" onclick="closeModal('rel-modal')">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Search modal ─────────────────────────────────────────────── -->
+  <div id="search-modal" class="modal-backdrop hidden">
+    <div class="modal" style="max-width:680px;max-height:86vh;display:flex;flex-direction:column">
+      <div class="modal-header">
+        <span>Search Scene Turns</span>
+        <button class="modal-close" onclick="closeModal('search-modal')">✕</button>
+      </div>
+      <div class="modal-body" style="display:flex;flex-direction:column;gap:12px;flex:1;overflow:hidden">
+        <div style="display:flex;gap:8px">
+          <input type="text" id="search-input" class="wb-field" placeholder="Search dialogue, narration…" style="flex:1"
+            oninput="runSearch()">
+        </div>
+        <div id="search-results" style="overflow-y:auto;flex:1;display:flex;flex-direction:column;gap:8px">
+          <div class="muted" style="font-size:0.85rem">Type to search across all scene turns.</div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn" onclick="closeModal('search-modal')">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Stats modal ───────────────────────────────────────────────── -->
+  <div id="stats-modal" class="modal-backdrop hidden">
+    <div class="modal" style="max-width:540px">
+      <div class="modal-header">
+        <span>Campaign Statistics</span>
+        <button class="modal-close" onclick="closeModal('stats-modal')">✕</button>
+      </div>
+      <div class="modal-body" id="stats-body">
+        <div class="muted">Loading…</div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn" onclick="closeModal('stats-modal')">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Restore modal ─────────────────────────────────────────────── -->
+  <div id="restore-modal" class="modal-backdrop hidden">
+    <div class="modal" style="max-width:480px">
+      <div class="modal-header">
+        <span>Restore from Backup</span>
+        <button class="modal-close" onclick="closeModal('restore-modal')">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="muted" style="margin-bottom:12px">Select a JSON backup file. A new campaign will be created — your current campaign is unchanged.</p>
+        <input type="file" id="restore-file" accept=".json" class="wb-field" style="width:100%;box-sizing:border-box">
+        <div id="restore-status" style="margin-top:8px;font-size:0.85rem"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-primary" onclick="runRestore()">Restore</button>
+        <button class="btn" onclick="closeModal('restore-modal')">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Template modal ────────────────────────────────────────────── -->
+  <div id="template-modal" class="modal-backdrop hidden">
+    <div class="modal" style="max-width:440px">
+      <div class="modal-header">
+        <span>Save as Template</span>
+        <button class="modal-close" onclick="closeModal('template-modal')">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="muted" style="margin-bottom:12px">Creates a new campaign with only the world document (NPCs, places, facts, factions, threads). Scenes and chronicle are not copied.</p>
+        <div class="form-group">
+          <label>Template Name</label>
+          <input type="text" id="template-name" class="wb-field" style="width:100%;box-sizing:border-box" placeholder="e.g. Dark Fantasy Setting">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-primary" onclick="runSaveTemplate()">Save Template</button>
+        <button class="btn" onclick="closeModal('template-modal')">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Image Generation modal ───────────────────────────────────────── -->
+  <!-- ── Campaign Settings Modal ──────────────────────────────────── -->
+  <div id="campaign-settings-modal" class="modal-backdrop hidden">
+    <div class="modal" style="max-width:540px;max-height:90vh;display:flex;flex-direction:column">
+      <div class="modal-header">
+        <span>Campaign Settings</span>
+        <button class="modal-close" onclick="closeModal('campaign-settings-modal')">✕</button>
+      </div>
+      <div class="modal-body" style="overflow-y:auto;flex:1">
+        <div class="form-group">
+          <label>Campaign Name</label>
+          <input type="text" id="cs-name" class="wb-field">
+        </div>
+        <div class="form-group">
+          <label>Ollama Model <span class="dim">(overrides default)</span></label>
+          <select id="cs-model" class="wb-field">
+            <option value="">Default model</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Summary Model <span class="dim">(for scene summary extraction — use a non-roleplay model)</span></label>
+          <select id="cs-summary-model" class="wb-field">
+            <option value="">Same as campaign model</option>
+          </select>
+        </div>
+        <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);margin:16px 0 10px">Generation Parameters</div>
+        <div class="gen-setting-row">
+          <div class="gen-setting-label"><span>Temperature</span><span class="gen-setting-value" id="cs-lbl-temperature">0.80</span></div>
+          <input type="range" id="cs-temperature" min="0" max="2" step="0.05" value="0.80" oninput="csSync('temperature',this.value,2)">
+          <div class="gen-setting-bounds"><span>0</span><span>2</span></div>
+          <p class="form-hint">How unpredictable the AI's word choices are. Low (0.2–0.5) = consistent and focused prose. Medium (0.7–1.0) = natural creative variation. High (1.2+) = wild and experimental — may become incoherent. Start here when tuning.</p>
+        </div>
+        <div class="gen-setting-row">
+          <div class="gen-setting-label"><span>Top-P</span><span class="gen-setting-value" id="cs-lbl-top_p">0.95</span></div>
+          <input type="range" id="cs-top_p" min="0" max="1" step="0.01" value="0.95" oninput="csSync('top_p',this.value,2)">
+          <div class="gen-setting-bounds"><span>0</span><span>1</span></div>
+          <p class="form-hint">Limits word choices to the most probable options that together make up this percentage of likelihood. 0.9–0.95 is a good default — it cuts off unlikely words while keeping variety. Lower values make responses more predictable; works alongside Temperature.</p>
+        </div>
+        <div class="gen-setting-row">
+          <div class="gen-setting-label"><span>Top-K</span><span class="gen-setting-value" id="cs-lbl-top_k">0</span></div>
+          <input type="range" id="cs-top_k" min="0" max="200" step="1" value="0" oninput="csSync('top_k',this.value,0)">
+          <div class="gen-setting-bounds"><span>0 (off)</span><span>200</span></div>
+          <p class="form-hint">Hard limit on how many candidate words the model considers at each step. 0 = disabled (recommended — let Top-P handle this instead). If enabled, 40–100 is typical. Lower = safer but more repetitive; higher = more variety.</p>
+        </div>
+        <div class="gen-setting-row">
+          <div class="gen-setting-label"><span>Min-P</span><span class="gen-setting-value" id="cs-lbl-min_p">0.05</span></div>
+          <input type="range" id="cs-min_p" min="0" max="1" step="0.01" value="0.05" oninput="csSync('min_p',this.value,2)">
+          <div class="gen-setting-bounds"><span>0 (off)</span><span>1</span></div>
+          <p class="form-hint">Cuts any word whose probability is less than this fraction of the top word's probability. Useful at high Temperature to remove truly improbable choices without killing variety. 0.05–0.1 works well alongside Temperature above 1.0. Leave at 0 if not using high Temperature.</p>
+        </div>
+        <div class="gen-setting-row">
+          <div class="gen-setting-label"><span>Repeat Penalty</span><span class="gen-setting-value" id="cs-lbl-repeat_penalty">1.10</span></div>
+          <input type="range" id="cs-repeat_penalty" min="1" max="1.5" step="0.01" value="1.10" oninput="csSync('repeat_penalty',this.value,2)">
+          <div class="gen-setting-bounds"><span>1 (off)</span><span>1.5</span></div>
+          <p class="form-hint">Makes the AI less likely to reuse words it just used. 1.0 = no penalty. 1.1 is a gentle nudge that reduces word loops. 1.3+ strongly discourages repetition but can make prose feel forced. Raise this if the AI keeps repeating phrases.</p>
+        </div>
+        <div class="gen-setting-row">
+          <div class="gen-setting-label"><span>Max Tokens</span><span class="gen-setting-value" id="cs-lbl-max_tokens">1024</span></div>
+          <input type="range" id="cs-max_tokens" min="64" max="8192" step="64" value="1024" oninput="csSync('max_tokens',this.value,0)">
+          <div class="gen-setting-bounds"><span>64</span><span>8192</span></div>
+          <p class="form-hint">Maximum length of each AI response, measured in tokens (roughly ¾ of a word each). 512–1024 suits most roleplay exchanges. Raise to 2048+ for longer narrative scenes or detailed descriptions. Higher values use more VRAM and take longer to generate.</p>
+        </div>
+        <div class="gen-setting-row">
+          <div class="gen-setting-label"><span>Seed</span><span class="gen-setting-value" id="cs-lbl-seed">-1</span></div>
+          <input type="range" id="cs-seed" min="-1" max="999999999" step="1" value="-1" oninput="csSync('seed',this.value,0)">
+          <div class="gen-setting-bounds"><span>-1 (random)</span><span>999 999 999</span></div>
+          <p class="form-hint">-1 uses a random seed every response (recommended for normal play). Set a fixed number to make the AI produce the same output for the same input — useful for testing or recreating a specific response. Any number works; the value itself doesn't matter.</p>
+        </div>
+        <div class="gen-setting-row">
+          <div class="gen-setting-label"><span>Context Window</span><span class="gen-setting-value" id="cs-lbl-context_window">32768</span></div>
+          <input type="range" id="cs-context_window" min="4096" max="131072" step="4096" value="32768" oninput="csSync('context_window',this.value,0)">
+          <div class="gen-setting-bounds"><span>4 096</span><span>131 072</span></div>
+          <p class="form-hint">Maximum number of tokens loaded into the AI's memory at once (context window size). Increase this if the AI loses track of earlier conversation — the default 32 768 handles roughly 50–80 turns. Must not exceed your model's actual context limit (check the model card). Higher values use significantly more VRAM.</p>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-sm btn-ghost" onclick="csResetDefaults()">Reset Defaults</button>
+        <button class="btn btn-primary" onclick="saveEditCampaign()">Save</button>
+        <button class="btn" onclick="closeModal('campaign-settings-modal')">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="imggen-modal" class="modal-backdrop hidden">
+    <div class="modal imggen-modal-inner">
+      <div class="modal-header">
+        <span id="imggen-title">Generate Image</span>
+        <button class="modal-close" onclick="closeModal('imggen-modal')">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="muted" id="imggen-source-hint" style="font-size:0.85rem;margin-bottom:12px"></p>
+
+        <div class="form-group">
+          <label>Image Prompt <span class="muted">(Stable Diffusion)</span></label>
+          <textarea id="imggen-prompt" rows="4" placeholder="Describe what you want to generate, or click ✨ Generate Prompt…" style="width:100%;box-sizing:border-box"></textarea>
+        </div>
+
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px">
+          <button class="btn btn-sm" id="imggen-gen-prompt-btn" onclick="generateImgPrompt()">✨ Generate Prompt</button>
+          <select id="imggen-model-select" style="flex:1;min-width:120px">
+            <option value="">Default model</option>
+          </select>
+          <span class="muted" id="imggen-gen-status" style="font-size:0.82rem"></span>
+        </div>
+
+        <div class="form-group">
+          <label>Style Tags <span class="muted">(appended to prompt)</span></label>
+          <input type="text" id="imggen-style-tags" placeholder="e.g. oil painting, fantasy art, detailed, cinematic lighting">
+        </div>
+
+        <div class="form-group">
+          <label>Negative Prompt</label>
+          <input type="text" id="imggen-negative" value="lowres, bad anatomy, blurry, watermark, text">
+        </div>
+
+        <details id="imggen-comfy-details" style="margin-bottom:12px">
+          <summary style="cursor:pointer;font-size:0.85rem;color:var(--text-dim);user-select:none">⚙ ComfyUI Settings</summary>
+          <div style="padding-top:10px">
+            <div class="form-group">
+              <label>ComfyUI URL</label>
+              <input type="text" id="imggen-comfy-url" value="http://localhost:8188">
+            </div>
+            <div class="form-group">
+              <label>Checkpoint <span class="muted dim">(leave blank to auto-detect)</span></label>
+              <div style="display:flex;gap:6px">
+                <input type="text" id="imggen-checkpoint" placeholder="auto-detect" style="flex:1">
+                <button class="btn btn-sm" onclick="fetchImgGenCheckpoints()">List</button>
+              </div>
+              <div id="imggen-checkpoint-list" class="muted" style="font-size:0.8rem;margin-top:4px;line-height:1.8"></div>
+            </div>
+            <div class="wb-grid-2">
+              <div class="form-group"><label>Width</label><input type="number" id="imggen-width" value="512" min="256" max="2048" step="64"></div>
+              <div class="form-group"><label>Height</label><input type="number" id="imggen-height" value="768" min="256" max="2048" step="64"></div>
+            </div>
+            <div class="wb-grid-2">
+              <div class="form-group"><label>Steps</label><input type="number" id="imggen-steps" value="20" min="1" max="100"></div>
+              <div class="form-group"><label>CFG Scale</label><input type="number" id="imggen-cfg" value="7" min="1" max="30" step="0.5"></div>
+            </div>
+          </div>
+        </details>
+
+        <!-- Upload alternative -->
+        <div style="display:flex;align-items:center;gap:8px;margin:10px 0 8px">
+          <hr style="flex:1;border:none;border-top:1px solid var(--border)">
+          <span class="dim" style="font-size:0.82rem;white-space:nowrap">or upload an image</span>
+          <hr style="flex:1;border:none;border-top:1px solid var(--border)">
+        </div>
+        <div class="form-group" style="margin-bottom:12px">
+          <input type="file" id="imggen-upload" accept="image/*" onchange="uploadImgFile(this)" style="font-size:0.85rem;color:var(--text-muted)">
+        </div>
+
+        <!-- Result -->
+        <div id="imggen-result" class="imggen-result hidden">
+          <img id="imggen-result-img" class="imggen-result-img" alt="" title="Click to expand" onclick="this.classList.toggle('imggen-result-img-full')">
+          <div class="imggen-result-actions">
+            <button id="imggen-save-btn" class="btn btn-sm btn-primary" onclick="saveImgGen()">💾 Save</button>
+            <button class="btn btn-sm" onclick="submitImgGen()">↺ Regenerate</button>
+            <a id="imggen-download-btn" class="btn btn-sm" download="generated_image.png">⬇ Download</a>
+            <button id="imggen-insert-btn" class="btn btn-sm hidden" onclick="insertImgGenToChat()">Insert into Chat</button>
+            <button class="btn btn-sm" onclick="closeModal('imggen-modal')">✕ Discard</button>
+          </div>
+          <div class="muted" style="font-size:11px;margin-top:4px">Click image to expand · Generated by ComfyUI</div>
+        </div>
+
+      </div>
+      <div class="modal-footer">
+        <span class="muted" id="imggen-status" style="margin-right:auto;font-size:0.82rem"></span>
+        <button class="btn btn-primary" id="imggen-submit-btn" onclick="submitImgGen()">🎨 Generate Image</button>
+        <button class="btn" onclick="closeModal('imggen-modal')">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Edit Scene Summary modal ─────────────────────────────────── -->
+  <div id="edit-summary-modal" class="modal-backdrop hidden">
+    <div class="modal" style="max-width:600px;max-height:85vh;display:flex;flex-direction:column">
+      <div class="modal-header">
+        <span id="es-title">Edit Scene Summary</span>
+        <button class="modal-close" onclick="closeModal('edit-summary-modal')">✕</button>
+      </div>
+      <div class="modal-body" style="flex:1;display:flex;flex-direction:column;gap:12px">
+        <div style="display:flex;gap:8px;align-items:center">
+          <select id="es-model" class="wb-field" style="flex:1">
+            <option value="">Campaign default model</option>
+          </select>
+          <button id="es-regen-btn" class="btn btn-sm" onclick="resuggestSceneSummary()">↺ Re-generate</button>
+        </div>
+        <span class="muted" id="es-status" style="font-size:0.82rem"></span>
+        <textarea id="es-textarea" class="wb-field" style="flex:1;min-height:200px;resize:vertical;font-size:0.9rem;line-height:1.5"></textarea>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-primary" onclick="saveSceneSummary()">Save Summary</button>
+        <button class="btn" onclick="closeModal('edit-summary-modal')">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Portrait lightbox ─────────────────────────────────────────── -->
+  <div id="portrait-lightbox" class="portrait-lightbox hidden" onclick="document.getElementById('portrait-lightbox').classList.add('hidden')">
+    <img id="portrait-lightbox-img" class="portrait-lightbox-img" alt="">
+    <div class="portrait-lightbox-hint muted">Click anywhere to close</div>
+  </div>
+
+  <!-- ── Import NPC from card modal ────────────────────────────────── -->
+  <div id="import-card-modal" class="modal-backdrop hidden">
+    <div class="modal" style="max-width:680px;max-height:90vh;display:flex;flex-direction:column">
+      <div class="modal-header">
+        <span>Import NPC from Character Card</span>
+        <button class="modal-close" onclick="closeModal('import-card-modal')">✕</button>
+      </div>
+      <div class="modal-body" style="overflow-y:auto;flex:1">
+
+        <!-- Step 1: upload -->
+        <div id="import-card-step1">
+          <p class="muted" style="margin-bottom:12px;font-size:0.88rem">
+            Import a SillyTavern-format character card (.json or .png). The AI will translate it into
+            an NPC for this campaign, identify contradictions with the world, and suggest adjustments.
+          </p>
+          <div class="form-group">
+            <label>Character Card <span class="dim">(.json or .png)</span></label>
+            <input type="file" id="import-card-file" accept=".json,.png" style="color:var(--text)">
+            <div id="import-card-file-info" class="muted" style="font-size:0.82rem;margin-top:4px"></div>
+          </div>
+          <div class="form-group">
+            <label>Additional Context <span class="dim">(optional)</span></label>
+            <textarea id="import-card-context" rows="3"
+              placeholder="e.g. 'This character is a travelling merchant who arrived recently' or leave blank"></textarea>
+          </div>
+          <div class="form-group">
+            <label>Model <span class="dim">(for analysis)</span></label>
+            <select id="import-card-model" class="wb-field">
+              <option value="">Default model</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Step 2: review contradictions -->
+        <div id="import-card-step2" class="hidden">
+          <div style="display:flex;gap:16px;flex-wrap:wrap">
+            <!-- Proposed NPC preview -->
+            <div style="flex:1;min-width:240px">
+              <h4 style="margin:0 0 10px">Proposed NPC</h4>
+              <div id="import-card-npc-preview" class="import-card-npc-preview"></div>
+            </div>
+            <!-- Contradictions -->
+            <div style="flex:1;min-width:240px">
+              <h4 style="margin:0 0 10px">Contradiction Report</h4>
+              <div id="import-card-contradictions">
+                <div class="muted">No contradictions detected.</div>
+              </div>
+            </div>
+          </div>
+          <p class="muted" style="font-size:0.82rem;margin-top:12px">
+            Check any adjustments you want to apply, then click "Import NPC" to open the editor pre-filled with the resolved data.
+          </p>
+        </div>
+
+      </div>
+      <div class="modal-footer">
+        <div id="import-card-step1-footer">
+          <button class="btn btn-primary" onclick="analyseImportCard()">✨ Analyse Card</button>
+          <button class="btn" onclick="closeModal('import-card-modal')">Cancel</button>
+        </div>
+        <div id="import-card-step2-footer" class="hidden" style="display:flex;gap:8px;width:100%">
+          <button class="btn" onclick="resetImportCard()" style="margin-right:auto">← Back</button>
+          <button class="btn btn-primary" onclick="confirmImportCard()">Import NPC →</button>
+          <button class="btn" onclick="closeModal('import-card-modal')">Cancel</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/campaign_overview.js?v={{CACHE_VER}}"></script>
+  <script src="/static/campaign_imggen.js?v={{CACHE_VER}}"></script>
+  <script>const CAMPAIGN_ID = "{{CAMPAIGN_ID}}";</script>
+</body>
+</html>

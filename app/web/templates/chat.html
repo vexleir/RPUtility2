@@ -1,0 +1,562 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RP Utility — Chat</title>
+  <script src="/static/theme.js?v={{CACHE_VER}}"></script>
+  <link rel="stylesheet" href="/static/style.css?v={{CACHE_VER}}">
+  <script>window.__SESSION_ID__ = "{{SESSION_ID}}";</script>
+  <!-- marked.js for markdown rendering in AI messages -->
+  <script src="https://cdn.jsdelivr.net/npm/marked@12/marked.min.js"></script>
+  <style>
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+  </style>
+</head>
+<body class="chat-layout">
+
+  <!-- ── Header ──────────────────────────────────────────────────── -->
+  <header class="chat-header">
+    <a href="/" class="btn btn-ghost btn-sm">← Sessions</a>
+
+    <div class="chat-header-info">
+      <div class="chat-header-title" id="session-title">Loading…</div>
+      <div class="chat-header-sub">
+        <span id="char-name"></span>
+        <span class="badge" id="model-badge"></span>
+        <span class="dim" id="location-badge"></span>
+      </div>
+    </div>
+
+    <div class="chat-header-actions">
+      <button class="btn btn-ghost btn-sm" id="search-toggle-btn" title="Search conversation">🔍</button>
+      <button class="btn btn-ghost btn-sm" onclick="openModal('persona-modal')" title="Player persona">👤</button>
+      <button class="btn btn-ghost btn-sm" onclick="openModal('gen-settings-modal')" title="Generation settings">⚙️</button>
+      <button class="btn btn-ghost btn-sm" onclick="openModal('skill-check-modal')" title="Roll a skill check">🎲</button>
+      <select id="theme-select" class="theme-select" onchange="setTheme(this.value)" title="Color theme"></select>
+      <button class="btn btn-ghost btn-sm" onclick="openModal('bg-modal')" title="Chat background">🖼</button>
+      <a href="/chat/{{SESSION_ID}}/recap" class="btn btn-ghost btn-sm" title="Story recap for returning players">📖 Recap</a>
+      <a href="/api/session/{{SESSION_ID}}/export" class="btn btn-ghost btn-sm" title="Export session as markdown" download>⬇</a>
+      <a href="/chat/{{SESSION_ID}}/status" class="btn btn-ghost btn-sm" title="Session status &amp; inspection">📊 Status</a>
+      <button class="btn btn-ghost btn-sm" onclick="refreshSidebar()" title="Refresh sidebar state">↺</button>
+    </div>
+  </header>
+
+  <!-- ── Error banner ─────────────────────────────────────────────── -->
+  <div class="banner banner-error" id="error-banner" style="display:none;margin:8px 16px;border-radius:8px"></div>
+
+  <!-- ── Search bar ────────────────────────────────────────────────── -->
+  <div id="search-bar" class="search-bar hidden">
+    <input type="text" id="search-input" placeholder="Search conversation…" autocomplete="off">
+    <span id="search-count" class="search-count"></span>
+    <button class="btn btn-ghost btn-sm" id="search-clear-btn">✕</button>
+  </div>
+
+  <!-- ── Body ────────────────────────────────────────────────────── -->
+  <div class="chat-body" id="chat-body">
+
+    <!-- Messages + Input -->
+    <div class="messages-col">
+
+      <div class="messages-area" id="messages-area">
+        <!-- Messages rendered by JS -->
+      </div>
+
+      <!-- Typing indicator (hidden via inline style only — do NOT add hidden class) -->
+      <div class="typing-indicator" id="typing-indicator" style="display:none">
+        <div class="typing-dots">
+          <span></span><span></span><span></span>
+        </div>
+        <span class="dim" style="font-size:12px" id="char-name-typing">Thinking…</span>
+      </div>
+
+      <!-- Input area -->
+      <div class="input-area">
+        <button class="btn btn-ghost btn-sm img-gen-btn" id="img-gen-btn" onclick="openImageGenDialog()" title="Generate image with ComfyUI">🎨</button>
+        <textarea
+          id="message-input"
+          placeholder="Write your message… (Enter to send, Shift+Enter for newline)"
+          rows="1"
+        ></textarea>
+        <button class="btn btn-primary" id="send-btn">Send</button>
+      </div>
+      <div class="input-hint">Enter to send &nbsp;·&nbsp; Shift+Enter for new line</div>
+    </div>
+
+    <!-- ── Sidebar ────────────────────────────────────────────────── -->
+    <aside class="sidebar-col">
+
+      <!-- Scene -->
+      <div class="sidebar-section" id="scene-section">
+        <div class="sidebar-section-header">
+          <span>📍 Scene</span>
+          <span class="sidebar-chevron">▼</span>
+        </div>
+        <div class="sidebar-content">
+          <div class="scene-item">
+            <label>Location</label>
+            <p id="scene-location">—</p>
+          </div>
+          <div class="scene-item" id="clock-item" style="display:none">
+            <label>In-World Time</label>
+            <p id="scene-clock" class="dim" style="font-size:12px">—</p>
+          </div>
+          <div class="scene-item" id="status-effects-item" style="display:none">
+            <label>Status Effects</label>
+            <div id="scene-status-effects"></div>
+          </div>
+          <div class="scene-item" id="mood-item" style="display:none">
+            <label>Character State</label>
+            <p id="scene-mood" class="dim" style="font-size:12px">—</p>
+          </div>
+          <div class="scene-item">
+            <label>Update location</label>
+            <div class="editable-field">
+              <input type="text" id="location-edit-input" placeholder="New location…">
+              <button class="btn btn-secondary btn-sm" id="save-location-btn">Save</button>
+            </div>
+          </div>
+          <div class="scene-item">
+            <label>Present</label>
+            <div class="chars-list" id="scene-chars"></div>
+          </div>
+          <div class="scene-item">
+            <label>Scene summary</label>
+            <p id="scene-summary" class="dim" style="font-size:12px;line-height:1.5"></p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Objectives -->
+      <div class="sidebar-section" id="objectives-section">
+        <div class="sidebar-section-header">
+          <span>🎯 Objectives</span>
+          <span class="sidebar-chevron">▼</span>
+        </div>
+        <div class="sidebar-content">
+          <div id="objectives-list">
+            <div class="dim" style="font-size:12px;text-align:center">Loading…</div>
+          </div>
+          <div class="objective-add-row">
+            <input type="text" id="new-objective-input" placeholder="Add objective…" onkeydown="if(event.key==='Enter')addObjective()">
+            <button class="btn btn-secondary btn-sm" onclick="addObjective()">Add</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Inventory -->
+      <div class="sidebar-section" id="inventory-section">
+        <div class="sidebar-section-header">
+          <span>🎒 Inventory</span>
+          <span class="sidebar-chevron">▼</span>
+        </div>
+        <div class="sidebar-content">
+          <div id="sidebar-inventory-list">
+            <div class="dim" style="font-size:12px;text-align:center">Loading…</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Status Effects -->
+      <div class="sidebar-section" id="effects-section">
+        <div class="sidebar-section-header">
+          <span>⚡ Status Effects</span>
+          <span class="sidebar-chevron">▼</span>
+        </div>
+        <div class="sidebar-content">
+          <div id="sidebar-effects-list">
+            <div class="dim" style="font-size:12px;text-align:center">Loading…</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Quest Log -->
+      <div class="sidebar-section" id="quests-section">
+        <div class="sidebar-section-header">
+          <span>📜 Quest Log</span>
+          <span class="sidebar-chevron">▼</span>
+        </div>
+        <div class="sidebar-content">
+          <div id="sidebar-quests-list">
+            <div class="dim" style="font-size:12px;text-align:center">Loading…</div>
+          </div>
+        </div>
+      </div>
+
+    </aside>
+
+  </div><!-- end chat-body -->
+
+  <!-- ══════════════════════════════════════════════════════════════
+       MODALS
+  ══════════════════════════════════════════════════════════════ -->
+
+  <!-- ── Persona modal ──────────────────────────────────────────── -->
+  <div class="rp-modal-backdrop" id="persona-modal" style="display:none" onclick="backdropClose(event,'persona-modal')">
+    <div class="rp-modal">
+      <div class="rp-modal-header">
+        <h3>👤 Player Persona</h3>
+        <button class="rp-modal-close" onclick="closeModal('persona-modal')">✕</button>
+      </div>
+      <div class="rp-modal-body">
+        <div class="form-group">
+          <label>Your name in chat</label>
+          <input type="text" id="persona-name-input" placeholder="Player" maxlength="40">
+        </div>
+        <div class="form-group">
+          <label>Avatar image (optional)</label>
+          <div class="avatar-upload-area">
+            <div class="avatar-preview-lg" id="persona-avatar-preview"></div>
+            <div style="display:flex;gap:8px;margin-top:8px">
+              <input type="file" id="persona-avatar-file" accept="image/*" style="display:none" onchange="handlePersonaAvatarFile(this)">
+              <button class="btn btn-secondary btn-sm" onclick="document.getElementById('persona-avatar-file').click()">Upload image</button>
+              <button class="btn btn-ghost btn-sm" onclick="clearPersonaAvatar()">Clear</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="rp-modal-footer">
+        <button class="btn btn-secondary" onclick="closeModal('persona-modal')">Cancel</button>
+        <button class="btn btn-primary" onclick="savePersona()">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Generation settings modal ──────────────────────────────── -->
+  <div class="rp-modal-backdrop" id="gen-settings-modal" style="display:none" onclick="backdropClose(event,'gen-settings-modal')">
+    <div class="rp-modal rp-modal-wide">
+      <div class="rp-modal-header">
+        <h3>⚙️ Generation Settings</h3>
+        <button class="rp-modal-close" onclick="closeModal('gen-settings-modal')">✕</button>
+      </div>
+      <div class="rp-modal-body">
+        <p class="form-hint" style="margin-bottom:16px">These override the server defaults for every message you send. Leave a field at its default to use the server config.</p>
+
+        <div class="gen-settings-grid">
+
+          <div class="gen-setting-row">
+            <div class="gen-setting-label">
+              <span>Temperature</span>
+              <span class="gen-setting-value" id="lbl-temperature">0.80</span>
+            </div>
+            <input type="range" id="sl-temperature" min="0" max="2" step="0.05" value="0.80"
+              oninput="syncLabel('temperature',this.value,2)">
+            <div class="gen-setting-bounds"><span>0</span><span>2</span></div>
+            <p class="form-hint">Controls randomness. Higher = more creative, lower = more focused.</p>
+          </div>
+
+          <div class="gen-setting-row">
+            <div class="gen-setting-label">
+              <span>Top-P</span>
+              <span class="gen-setting-value" id="lbl-top_p">0.95</span>
+            </div>
+            <input type="range" id="sl-top_p" min="0" max="1" step="0.01" value="0.95"
+              oninput="syncLabel('top_p',this.value,2)">
+            <div class="gen-setting-bounds"><span>0</span><span>1</span></div>
+            <p class="form-hint">Nucleus sampling. Keeps tokens whose cumulative probability ≤ this.</p>
+          </div>
+
+          <div class="gen-setting-row">
+            <div class="gen-setting-label">
+              <span>Top-K</span>
+              <span class="gen-setting-value" id="lbl-top_k">0</span>
+            </div>
+            <input type="range" id="sl-top_k" min="0" max="200" step="1" value="0"
+              oninput="syncLabel('top_k',this.value,0)">
+            <div class="gen-setting-bounds"><span>0 (off)</span><span>200</span></div>
+            <p class="form-hint">Limit sampling to top-K tokens each step. 0 = disabled.</p>
+          </div>
+
+          <div class="gen-setting-row">
+            <div class="gen-setting-label">
+              <span>Min-P</span>
+              <span class="gen-setting-value" id="lbl-min_p">0.05</span>
+            </div>
+            <input type="range" id="sl-min_p" min="0" max="1" step="0.01" value="0.05"
+              oninput="syncLabel('min_p',this.value,2)">
+            <div class="gen-setting-bounds"><span>0 (off)</span><span>1</span></div>
+            <p class="form-hint">Minimum token probability relative to the top token. 0 = disabled.</p>
+          </div>
+
+          <div class="gen-setting-row">
+            <div class="gen-setting-label">
+              <span>Repeat Penalty</span>
+              <span class="gen-setting-value" id="lbl-repeat_penalty">1.10</span>
+            </div>
+            <input type="range" id="sl-repeat_penalty" min="1" max="1.5" step="0.01" value="1.10"
+              oninput="syncLabel('repeat_penalty',this.value,2)">
+            <div class="gen-setting-bounds"><span>1 (off)</span><span>1.5</span></div>
+            <p class="form-hint">Penalises repeating recent tokens. 1.0 = no penalty.</p>
+          </div>
+
+          <div class="gen-setting-row">
+            <div class="gen-setting-label">
+              <span>Max Tokens</span>
+              <span class="gen-setting-value" id="lbl-max_tokens">1024</span>
+            </div>
+            <input type="range" id="sl-max_tokens" min="64" max="8192" step="64" value="1024"
+              oninput="syncLabel('max_tokens',this.value,0)">
+            <div class="gen-setting-bounds"><span>64</span><span>8192</span></div>
+            <p class="form-hint">Maximum number of tokens the model will generate per response.</p>
+          </div>
+
+          <div class="gen-setting-row">
+            <div class="gen-setting-label">
+              <span>Seed</span>
+              <span class="gen-setting-value" id="lbl-seed">-1</span>
+            </div>
+            <input type="range" id="sl-seed" min="-1" max="999999999" step="1" value="-1"
+              oninput="syncLabel('seed',this.value,0)">
+            <div class="gen-setting-bounds"><span>-1 (random)</span><span>999 999 999</span></div>
+            <p class="form-hint">-1 = random seed every time. Fixed seed = reproducible output.</p>
+          </div>
+
+        </div><!-- gen-settings-grid -->
+
+        <!-- ComfyUI sub-section -->
+        <div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border)">
+          <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);margin-bottom:12px">🎨 ComfyUI Image Generation</div>
+          <div class="form-group">
+            <label>ComfyUI URL</label>
+            <input type="text" id="comfyui-url-input" value="http://localhost:8188" placeholder="http://localhost:8188">
+          </div>
+          <div class="form-group">
+            <label>Default checkpoint <span class="form-hint" style="display:inline">(leave empty to auto-detect)</span></label>
+            <div style="display:flex;gap:8px">
+              <input type="text" id="comfyui-checkpoint-input" placeholder="v1-5-pruned-emaonly.ckpt">
+              <button class="btn btn-secondary btn-sm" onclick="fetchComfyCheckpoints()" style="flex-shrink:0">Fetch list</button>
+            </div>
+            <div id="comfyui-checkpoint-list" style="margin-top:6px;font-size:12px;color:var(--text-dim)"></div>
+          </div>
+          <div class="gen-settings-grid" style="grid-template-columns:1fr 1fr">
+            <div class="gen-setting-row">
+              <div class="gen-setting-label"><span>Steps</span><span class="gen-setting-value" id="lbl-comfy-steps">20</span></div>
+              <input type="range" id="sl-comfy-steps" min="1" max="60" step="1" value="20" oninput="syncLabelDirect('comfy-steps',this.value)">
+              <div class="gen-setting-bounds"><span>1</span><span>60</span></div>
+            </div>
+            <div class="gen-setting-row">
+              <div class="gen-setting-label"><span>CFG Scale</span><span class="gen-setting-value" id="lbl-comfy-cfg">7.0</span></div>
+              <input type="range" id="sl-comfy-cfg" min="1" max="20" step="0.5" value="7" oninput="syncLabelDirect('comfy-cfg',this.value)">
+              <div class="gen-setting-bounds"><span>1</span><span>20</span></div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+      <div class="rp-modal-footer">
+        <button class="btn btn-ghost" onclick="resetGenSettings()">Reset defaults</button>
+        <button class="btn btn-secondary" onclick="closeModal('gen-settings-modal')">Cancel</button>
+        <button class="btn btn-primary" onclick="saveGenSettings()">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Background modal ───────────────────────────────────────── -->
+  <div class="rp-modal-backdrop" id="bg-modal" style="display:none" onclick="backdropClose(event,'bg-modal')">
+    <div class="rp-modal">
+      <div class="rp-modal-header">
+        <h3>🖼 Chat Background</h3>
+        <button class="rp-modal-close" onclick="closeModal('bg-modal')">✕</button>
+      </div>
+      <div class="rp-modal-body">
+        <div class="form-group">
+          <label>Upload image</label>
+          <input type="file" id="bg-file-input" accept="image/*" onchange="handleBgFile(this)" style="display:none">
+          <button class="btn btn-secondary btn-sm" onclick="document.getElementById('bg-file-input').click()">Choose file…</button>
+        </div>
+        <div class="form-group">
+          <label>or paste image URL</label>
+          <div style="display:flex;gap:8px">
+            <input type="text" id="bg-url-input" placeholder="https://…">
+            <button class="btn btn-secondary btn-sm" onclick="applyBgUrl()" style="flex-shrink:0">Apply</button>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Presets</label>
+          <div class="bg-presets">
+            <div class="bg-preset" style="background:linear-gradient(135deg,#0d0d1a,#1a1a38)" onclick="applyBgGradient('linear-gradient(135deg,#0d0d1a,#1a1a38)')">Dark Purple</div>
+            <div class="bg-preset" style="background:linear-gradient(135deg,#0a1628,#1e3a5f)" onclick="applyBgGradient('linear-gradient(135deg,#0a1628,#1e3a5f)')">Deep Ocean</div>
+            <div class="bg-preset" style="background:linear-gradient(135deg,#1a0d0d,#3f1f1f)" onclick="applyBgGradient('linear-gradient(135deg,#1a0d0d,#3f1f1f)')">Crimson Dark</div>
+            <div class="bg-preset" style="background:linear-gradient(135deg,#0d1a0d,#1f3f1f)" onclick="applyBgGradient('linear-gradient(135deg,#0d1a0d,#1f3f1f)')">Forest Night</div>
+            <div class="bg-preset" style="background:linear-gradient(135deg,#1a1a0d,#3f3f1f)" onclick="applyBgGradient('linear-gradient(135deg,#1a1a0d,#3f3f1f)')">Old Parchment</div>
+            <div class="bg-preset" style="background:#0d0d0d" onclick="applyBgGradient('#0d0d0d')">Pure Black</div>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Opacity overlay</label>
+          <div style="display:flex;align-items:center;gap:10px">
+            <input type="range" id="bg-overlay-slider" min="0" max="0.9" step="0.05" value="0.5"
+              oninput="applyBgOverlay(this.value)" style="flex:1">
+            <span id="bg-overlay-label" style="font-size:12px;width:36px;text-align:right">0.50</span>
+          </div>
+          <p class="form-hint">Dark overlay on top of the background to keep text readable.</p>
+        </div>
+      </div>
+      <div class="rp-modal-footer">
+        <button class="btn btn-ghost" onclick="clearBackground()">Clear background</button>
+        <button class="btn btn-primary" onclick="closeModal('bg-modal')">Done</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Image generation dialog ────────────────────────────────── -->
+  <div class="rp-modal-backdrop" id="img-gen-modal" style="display:none" onclick="backdropClose(event,'img-gen-modal')">
+    <div class="rp-modal rp-modal-wide">
+      <div class="rp-modal-header">
+        <h3>🎨 Generate Image</h3>
+        <button class="rp-modal-close" onclick="closeModal('img-gen-modal')">✕</button>
+      </div>
+      <div class="rp-modal-body">
+
+        <div class="form-group">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+            <label style="margin:0">Prompt</label>
+            <button class="btn btn-secondary btn-sm" id="gen-prompt-btn" onclick="generateImagePrompt()">✨ Generate Prompt</button>
+          </div>
+          <textarea id="img-gen-prompt" rows="4" placeholder="Click ✨ Generate Prompt to auto-build from the current scene, or type manually…" style="resize:vertical"></textarea>
+          <div id="gen-prompt-status" style="font-size:12px;color:var(--text-muted);min-height:16px;margin-top:4px"></div>
+        </div>
+
+        <div class="form-group">
+          <label>Art style</label>
+          <div class="img-style-grid">
+            <label class="img-style-option">
+              <input type="radio" name="img-style" value="" checked>
+              <span>None</span>
+            </label>
+            <label class="img-style-option">
+              <input type="radio" name="img-style" value="photorealistic, 8k, high detail, RAW photo, cinematic lighting, sharp focus">
+              <span>Realistic</span>
+            </label>
+            <label class="img-style-option">
+              <input type="radio" name="img-style" value="anime style, manga art, cel shading, vibrant colors, detailed illustration">
+              <span>Anime</span>
+            </label>
+            <label class="img-style-option">
+              <input type="radio" name="img-style" value="fantasy digital art, artstation, concept art, highly detailed, dramatic lighting, epic scene">
+              <span>Fantasy Art</span>
+            </label>
+            <label class="img-style-option">
+              <input type="radio" name="img-style" value="dark fantasy, grim, gritty, moody shadows, gothic atmosphere, ominous lighting">
+              <span>Dark Fantasy</span>
+            </label>
+            <label class="img-style-option">
+              <input type="radio" name="img-style" value="oil painting, classical fine art, rich textures, museum quality, old masters style">
+              <span>Oil Painting</span>
+            </label>
+            <label class="img-style-option">
+              <input type="radio" name="img-style" value="watercolor painting, soft edges, flowing colors, delicate brushwork, artistic">
+              <span>Watercolor</span>
+            </label>
+            <label class="img-style-option">
+              <input type="radio" name="img-style" value="digital painting, concept art, artstation trending, painterly brush strokes, detailed">
+              <span>Digital Painting</span>
+            </label>
+            <label class="img-style-option">
+              <input type="radio" name="img-style" value="cyberpunk, neon lights, futuristic city, rain-slicked streets, dark atmosphere, sci-fi">
+              <span>Cyberpunk</span>
+            </label>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label>Negative prompt</label>
+          <textarea id="img-gen-negative" rows="2" style="resize:vertical">lowres, bad anatomy, blurry, watermark, text, signature</textarea>
+        </div>
+
+        <div class="gen-settings-grid" style="grid-template-columns:1fr 1fr">
+          <div class="form-group">
+            <label>Width</label>
+            <select id="img-gen-width">
+              <option value="512" selected>512</option>
+              <option value="768">768</option>
+              <option value="1024">1024</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Height</label>
+            <select id="img-gen-height">
+              <option value="512" selected>512</option>
+              <option value="768">768</option>
+              <option value="1024">1024</option>
+            </select>
+          </div>
+        </div>
+
+        <div id="img-gen-status" style="font-size:13px;color:var(--text-muted);min-height:20px"></div>
+      </div>
+      <div class="rp-modal-footer">
+        <button class="btn btn-secondary" onclick="closeModal('img-gen-modal')">Cancel</button>
+        <button class="btn btn-primary" id="img-gen-submit-btn" onclick="submitImageGen()">Generate</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Skill Check modal ──────────────────────────────────────── -->
+  <div class="rp-modal-backdrop" id="skill-check-modal" style="display:none" onclick="backdropClose(event,'skill-check-modal')">
+    <div class="rp-modal">
+      <div class="rp-modal-header">
+        <h3>🎲 Skill Check</h3>
+        <button class="rp-modal-close" onclick="closeModal('skill-check-modal')">✕</button>
+      </div>
+      <div class="rp-modal-body">
+        <div class="form-group">
+          <label>Stat</label>
+          <select id="skill-check-stat" style="width:100%">
+            <option value="">— free roll (no modifier) —</option>
+          </select>
+        </div>
+        <div class="form-group" style="display:flex;gap:12px">
+          <div style="flex:1">
+            <label>Difficulty (DC)</label>
+            <input type="number" id="skill-check-dc" value="15" min="1" max="100" style="width:100%">
+          </div>
+          <div style="flex:1">
+            <label>Dice</label>
+            <input type="text" id="skill-check-dice" value="d20" placeholder="d20, 2d6…" style="width:100%">
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Context (optional)</label>
+          <input type="text" id="skill-check-context" placeholder="What are you attempting?" style="width:100%">
+        </div>
+        <div id="skill-check-result" style="display:none;margin-top:12px"></div>
+      </div>
+      <div class="rp-modal-footer">
+        <button class="btn btn-secondary" onclick="closeModal('skill-check-modal')">Close</button>
+        <button class="btn btn-primary" onclick="rollSkillCheck()">Roll</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/chat.js?v={{CACHE_VER}}"></script>
+
+  <!-- Wire up location save after DOM ready -->
+  <script>
+    document.addEventListener("DOMContentLoaded", () => {
+      const saveBtn = document.getElementById("save-location-btn");
+      if (saveBtn) {
+        saveBtn.addEventListener("click", async () => {
+          const input = document.getElementById("location-edit-input");
+          const newLocation = input.value.trim();
+          if (!newLocation) return;
+          try {
+            await fetch(`/api/session/${window.__SESSION_ID__}/scene`, {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ location: newLocation }),
+            });
+            input.value = "";
+            await refreshScene();
+            const badge = document.getElementById("location-badge");
+            if (badge) badge.textContent = "📍 " + newLocation;
+          } catch (e) {
+            console.error(e);
+          }
+        });
+      }
+    });
+  </script>
+
+</body>
+</html>
