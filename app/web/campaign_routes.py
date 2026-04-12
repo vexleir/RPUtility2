@@ -1793,17 +1793,30 @@ def compress_chronicle(campaign_id: str, req: UpdateChronicleRequest):
     )
 
     campaign = _campaigns().get(campaign_id)
-    model = (campaign.model_name if campaign else None) or config.ollama_model
+    model = (getattr(campaign, "summary_model_name", None) if campaign else None) \
+            or (campaign.model_name if campaign else None) \
+            or config.ollama_model
 
+    user_prompt = (
+        f"Below are {len(entries_sorted)} chronicle entries covering "
+        f"Scenes {entries_sorted[0].scene_range_start}–{entries_sorted[-1].scene_range_end}.\n"
+        "Condense them into a single shorter summary. Do NOT add any new events, characters, or outcomes.\n\n"
+        f"{combined}\n\n"
+        "--- END OF ENTRIES ---\n\n"
+        "Write the condensed summary now, using only the events stated above:"
+    )
+
+    import re as _re
     try:
         payload = {
             "model": model,
             "messages": [
                 {"role": "system", "content": _COMPRESS_SYSTEM},
-                {"role": "user", "content": combined},
+                {"role": "user", "content": user_prompt},
             ],
             "stream": False,
-            "options": {"temperature": 0.4, "num_predict": 512, "num_ctx": 4096},
+            "think": False,
+            "options": {"temperature": 0.1, "num_predict": 512, "num_ctx": 4096},
         }
         resp = httpx.post(
             f"{config.ollama_base_url.rstrip('/')}/api/chat",
@@ -1811,7 +1824,8 @@ def compress_chronicle(campaign_id: str, req: UpdateChronicleRequest):
             timeout=180.0,
         )
         resp.raise_for_status()
-        summary = resp.json()["message"]["content"].strip()
+        raw = resp.json()["message"]["content"]
+        summary = _re.sub(r"<think>[\s\S]*?</think>", "", raw, flags=_re.IGNORECASE).strip()
     except Exception as e:
         raise HTTPException(503, f"AI compression failed: {e}")
 
