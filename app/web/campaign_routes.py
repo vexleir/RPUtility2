@@ -245,6 +245,7 @@ class SaveThreadRequest(BaseModel):
     description: str = ""
     status: str = "active"
     resolution: str = ""
+    last_mentioned_scene: int = 0
 
 class SaveFactionRequest(BaseModel):
     id: Optional[str] = None
@@ -1054,6 +1055,7 @@ def save_thread(campaign_id: str, req: SaveThreadRequest):
         description=req.description,
         status=ThreadStatus(req.status),
         resolution=req.resolution,
+        last_mentioned_scene=req.last_mentioned_scene if req.last_mentioned_scene else (existing.last_mentioned_scene if existing else 0),
         created_at=existing.created_at if existing else datetime.now(UTC).replace(tzinfo=None),
     )
     _threads().save(t)
@@ -1497,8 +1499,6 @@ def scene_regenerate_stream(campaign_id: str, scene_id: str, req: SceneRegenerat
     # Load context
     pc = _pcs().get(campaign_id)
     sheet = _sheets().get_for_owner(campaign_id, "player", "player")
-    sheet = _sheets().get_for_owner(campaign_id, "player", "player")
-    sheet = _sheets().get_for_owner(campaign_id, "player", "player")
     world_facts_list = _facts().get_all(campaign_id)
     threads_list = _threads().get_active(campaign_id)
     objectives_list = _objectives().get_active(campaign_id)
@@ -1604,6 +1604,7 @@ def get_prompt_preview(campaign_id: str, scene_id: str):
         raise HTTPException(404, "Scene not found")
 
     pc = _pcs().get(campaign_id)
+    sheet = _sheets().get_for_owner(campaign_id, "player", "player")
     world_facts_list = _facts().get_all(campaign_id)
     threads_list = _threads().get_active(campaign_id)
     objectives_list = _objectives().get_active(campaign_id)
@@ -5572,6 +5573,7 @@ def scene_open_stream(campaign_id: str, scene_id: str, req: SceneOpenRequest):
         raise HTTPException(404, "Scene not found")
 
     pc = _pcs().get(campaign_id)
+    sheet = _sheets().get_for_owner(campaign_id, "player", "player")
     world_facts_list = _facts().get_all(campaign_id)
     threads_list = _threads().get_active(campaign_id)
     objectives_list = _objectives().get_active(campaign_id)
@@ -5887,6 +5889,16 @@ class SuggestSummaryRequest(BaseModel):
     model_name: Optional[str] = None
 
 
+class GodPromptRequest(BaseModel):
+    instruction: str
+    model_name: Optional[str] = None
+
+
+class SuggestSceneRequest(BaseModel):
+    hint: str = ""
+    model_name: Optional[str] = None
+
+
 _SUMMARY_CHUNK_SIZE = 12  # turns per extraction call
 
 
@@ -6104,6 +6116,380 @@ def suggest_world_updates(campaign_id: str, scene_id: str):
         "_model": model,
         "_parse_ok": parse_ok,
         "_raw": raw[:2000],   # first 2000 chars for client-side debug panel
+    }
+
+
+# ── God Prompt ─────────────────────────────────────────────────────────────────
+
+_GOD_PROMPT_SYSTEM = """You are a world-state editor for a tabletop roleplaying game campaign. The GM gives you a natural-language instruction and you output a JSON object describing exactly what to change in the world document.
+
+RULES:
+- Match existing entities by their exact UUID shown in the context lists below.
+- For npc field updates, valid fields: current_state, current_location, relationship_to_player, personality, secrets, is_alive, status, status_reason, short_term_goal, long_term_goal.
+- Make only the changes that are clearly requested or logically implied. Do not over-reach.
+- If an entity doesn't exist yet, use the create_ arrays. If it exists, use update_. Use delete_ only if explicitly requested.
+- Every entry must include a brief "reason" explaining the change.
+
+OUTPUT: A single JSON object with exactly these keys (use [] or "" for anything not needed):
+{
+  "update_npcs": [
+    {"npc_id": "exact-uuid", "npc_name": "...", "field": "current_state", "new_value": "...", "reason": "..."}
+  ],
+  "create_npcs": [
+    {"name": "...", "role": "...", "appearance": "...", "personality": "...", "relationship_to_player": "...", "current_state": "...", "short_term_goal": "...", "secrets": "...", "reason": "..."}
+  ],
+  "delete_npcs": [
+    {"npc_id": "exact-uuid", "npc_name": "...", "reason": "..."}
+  ],
+  "create_facts": [
+    {"content": "...", "reason": "..."}
+  ],
+  "update_facts": [
+    {"fact_id": "exact-uuid", "old_content": "...", "new_content": "...", "reason": "..."}
+  ],
+  "delete_facts": [
+    {"fact_id": "exact-uuid", "content": "...", "reason": "..."}
+  ],
+  "create_threads": [
+    {"title": "...", "description": "...", "reason": "..."}
+  ],
+  "update_threads": [
+    {"thread_id": "exact-uuid", "title": "...", "new_status": "active|dormant|resolved", "description": "...", "resolution": "...", "reason": "..."}
+  ],
+  "delete_threads": [
+    {"thread_id": "exact-uuid", "title": "...", "reason": "..."}
+  ],
+  "create_quests": [
+    {"title": "...", "description": "...", "giver_npc_name": "...", "importance": "low|medium|high", "reason": "..."}
+  ],
+  "update_quests": [
+    {"quest_id": "exact-uuid", "title": "...", "new_status": "active|completed|abandoned", "reason": "..."}
+  ],
+  "create_places": [
+    {"name": "...", "description": "...", "current_state": "...", "reason": "..."}
+  ],
+  "update_places": [
+    {"place_id": "exact-uuid", "name": "...", "field": "description|current_state", "new_value": "...", "reason": "..."}
+  ],
+  "create_factions": [
+    {"name": "...", "description": "...", "goals": "...", "standing_with_player": "...", "reason": "..."}
+  ],
+  "update_factions": [
+    {"faction_id": "exact-uuid", "name": "...", "field": "description|goals|standing_with_player|relationship_notes", "new_value": "...", "reason": "..."}
+  ],
+  "narrative_note": "One sentence summarising what was changed and why."
+}
+
+Output ONLY the JSON object. No preamble, no explanation outside the JSON."""
+
+_SUGGEST_SCENE_SYSTEM = """You are a creative director for a tabletop roleplaying game. Your job is to design a compelling next scene that naturally continues the story.
+
+You will receive:
+- Current world state (NPCs, narrative threads, world facts, places)
+- Recent story history (chronicle entries, last scene summary)
+- A hint from the player about what they want next (may be vague or "surprise me")
+
+OUTPUT: A single JSON object with exactly these keys:
+{
+  "title": "Evocative scene title",
+  "location": "Specific location name or description",
+  "npc_ids": ["exact-uuid", "exact-uuid"],
+  "intent": "1-2 sentences: what this scene should accomplish narratively",
+  "tone": "mood/atmosphere keywords (e.g. tense, melancholy, hopeful)",
+  "reasoning": "Brief explanation of why this scene fits the story now"
+}
+
+Rules:
+- Only use NPC IDs from the provided list. Match by name if the hint references one.
+- The scene must respect established world facts and active threads.
+- Prefer locations from the established places list, but may invent new ones.
+- If hint is "surprise me" or blank, pick the most dramatically appropriate next moment.
+- Keep intent focused — one clear goal per scene.
+
+Output ONLY the JSON object. No preamble."""
+
+
+@router.post("/{campaign_id}/god-prompt")
+def run_god_prompt(campaign_id: str, req: GodPromptRequest):
+    """
+    Natural-language GM command that proposes structured world changes.
+    Returns suggestions for the player to review — does NOT auto-apply.
+    """
+    import json as _json
+    import httpx
+    import re as _re
+    from app.campaigns.world_builder import _extract_json
+
+    _require_campaign(campaign_id)
+    campaign = _campaigns().get(campaign_id)
+
+    # Gather world context
+    npcs = _npcs().get_all(campaign_id)
+    facts = _facts().get_all(campaign_id)
+    threads = _threads().get_all(campaign_id)
+    quests = _quests().get_all(campaign_id)
+    objectives = _objectives().get_all(campaign_id)
+    places = _places().get_all(campaign_id)
+    factions = _factions().get_all(campaign_id)
+
+    def _lines(items, fmt):
+        return [fmt(i) for i in items] if items else []
+
+    npc_lines = _lines(npcs, lambda n: (
+        f"• {n.name} (id={n.id}) — role: {n.role or 'unknown'}, "
+        f"state: \"{n.current_state}\", alive: {n.is_alive}, "
+        f"location: \"{n.current_location}\""
+    ))
+    fact_lines = _lines(facts, lambda f: f"• (id={f.id}) {f.content}")
+    thread_lines = _lines(threads, lambda t:
+        f"• {t.title} (id={t.id}) [{t.status.value}]: {t.description}"
+    )
+    quest_lines = _lines(quests, lambda q:
+        f"• {q.title} (id={q.id}) [{q.status.value}]: {q.description}"
+    )
+    objective_lines = _lines(objectives, lambda o:
+        f"• {o.title} (id={o.id}) [{o.status.value}]"
+    )
+    place_lines = _lines(places, lambda p:
+        f"• {p.name} (id={p.id}): {p.description}"
+    )
+    faction_lines = _lines(factions, lambda f:
+        f"• {f.name} (id={f.id}): {f.description}"
+    )
+
+    parts = [f"[GM INSTRUCTION]\n{req.instruction.strip()}"]
+    if npc_lines:
+        parts.append("[CURRENT NPCs]\n" + "\n".join(npc_lines))
+    if fact_lines:
+        parts.append("[WORLD FACTS]\n" + "\n".join(fact_lines))
+    if thread_lines:
+        parts.append("[NARRATIVE THREADS]\n" + "\n".join(thread_lines))
+    if quest_lines:
+        parts.append("[QUESTS]\n" + "\n".join(quest_lines))
+    if objective_lines:
+        parts.append("[OBJECTIVES]\n" + "\n".join(objective_lines))
+    if place_lines:
+        parts.append("[PLACES]\n" + "\n".join(place_lines))
+    if faction_lines:
+        parts.append("[FACTIONS]\n" + "\n".join(faction_lines))
+
+    prompt = "\n\n".join(parts) + "\n\nOutput ONLY the JSON object."
+
+    model = req.model_name \
+        or (getattr(campaign, "summary_model_name", None) if campaign else None) \
+        or (campaign.model_name if campaign else None) \
+        or config.ollama_model
+
+    log.info("god_prompt: model=%s campaign=%s", model, campaign_id)
+
+    try:
+        payload = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": _GOD_PROMPT_SYSTEM},
+                {"role": "user", "content": prompt},
+            ],
+            "stream": False,
+            "think": False,
+            "options": {"temperature": 0.4, "num_predict": 4096, "num_ctx": config.context_window},
+        }
+        r = httpx.post(
+            f"{config.active_base_url().rstrip('/')}/api/chat"
+            if config.provider == "ollama"
+            else f"{config.active_base_url().rstrip('/')}/v1/chat/completions",
+            json=payload if config.provider == "ollama" else {
+                "model": model,
+                "messages": payload["messages"],
+                "temperature": 0.4,
+                "max_tokens": 4096,
+                "stream": False,
+            },
+            timeout=httpx.Timeout(10.0, read=240.0),
+        )
+        r.raise_for_status()
+        if config.provider == "ollama":
+            raw = r.json()["message"]["content"].strip()
+        else:
+            raw = r.json()["choices"][0]["message"]["content"].strip()
+    except httpx.ConnectError:
+        raise HTTPException(503, f"Cannot reach {config.provider}. Is it running?")
+    except httpx.TimeoutException:
+        raise HTTPException(504, "God Prompt timed out. Try a faster model.")
+    except Exception as e:
+        raise HTTPException(503, f"God Prompt failed: {e}")
+
+    raw = _re.sub(r"<think>[\s\S]*?</think>", "", raw, flags=_re.IGNORECASE).strip()
+    data = _extract_json(raw)
+    parse_ok = bool(data)
+    if not parse_ok:
+        log.warning("god_prompt: JSON parse failed. Raw:\n%s", raw[:2000])
+
+    return {
+        "update_npcs":      data.get("update_npcs", []),
+        "create_npcs":      data.get("create_npcs", []),
+        "delete_npcs":      data.get("delete_npcs", []),
+        "create_facts":     data.get("create_facts", []),
+        "update_facts":     data.get("update_facts", []),
+        "delete_facts":     data.get("delete_facts", []),
+        "create_threads":   data.get("create_threads", []),
+        "update_threads":   data.get("update_threads", []),
+        "delete_threads":   data.get("delete_threads", []),
+        "create_quests":    data.get("create_quests", []),
+        "update_quests":    data.get("update_quests", []),
+        "create_places":    data.get("create_places", []),
+        "update_places":    data.get("update_places", []),
+        "create_factions":  data.get("create_factions", []),
+        "update_factions":  data.get("update_factions", []),
+        "narrative_note":   data.get("narrative_note", ""),
+        "_model": model,
+        "_parse_ok": parse_ok,
+        "_raw": raw[:2000],
+    }
+
+
+@router.post("/{campaign_id}/suggest-scene")
+def suggest_scene(campaign_id: str, req: SuggestSceneRequest):
+    """
+    Given a player hint (or 'surprise me'), suggest a complete scene setup
+    that continues the story naturally from the established world state.
+    Returns {title, location, npc_ids, intent, tone, reasoning}.
+    """
+    import httpx
+    import re as _re
+    from app.campaigns.world_builder import _extract_json
+
+    _require_campaign(campaign_id)
+    campaign = _campaigns().get(campaign_id)
+
+    npcs = _npcs().get_all(campaign_id)
+    threads_all = _threads().get_all(campaign_id)
+    facts_all = _facts().get_all(campaign_id)
+    places_all = _places().get_all(campaign_id)
+    chronicle_all = sorted(_chronicle().get_all(campaign_id), key=lambda e: e.scene_range_start)
+    scenes_all = _scenes().get_all(campaign_id)
+
+    # Keep only confirmed facts (critical + normal; skip background unless few facts)
+    key_facts = [f for f in facts_all if f.priority in ("critical", "normal")]
+    if not key_facts:
+        key_facts = facts_all
+    key_facts = key_facts[:30]  # cap to avoid prompt bloat
+
+    # Most recent confirmed scene
+    confirmed_scenes = [s for s in scenes_all if s.confirmed]
+    last_scene = confirmed_scenes[-1] if confirmed_scenes else None
+
+    # Recent chronicle (last 5 entries)
+    recent_chronicle = chronicle_all[-5:] if chronicle_all else []
+
+    active_threads = [t for t in threads_all if t.status.value == "active"]
+    alive_npcs = [n for n in npcs if n.is_alive]
+
+    parts = []
+    hint_text = req.hint.strip() if req.hint else "surprise me"
+    parts.append(f"[PLAYER HINT]\n{hint_text}")
+
+    if last_scene:
+        summary = last_scene.confirmed_summary or last_scene.intent or ""
+        parts.append(
+            f"[LAST SCENE — Scene {last_scene.scene_number}: {last_scene.title}]\n"
+            f"Location: {last_scene.location}\n"
+            + (f"Summary: {summary}" if summary else "")
+        )
+
+    if recent_chronicle:
+        chron_lines = [
+            f"• Scene {e.scene_range_start}: {e.content[:200]}" + ("…" if len(e.content) > 200 else "")
+            for e in recent_chronicle
+        ]
+        parts.append("[STORY SO FAR]\n" + "\n".join(chron_lines))
+
+    if active_threads:
+        thread_lines = [
+            f"• {t.title} (id={t.id}): {t.description}"
+            for t in active_threads
+        ]
+        parts.append("[ACTIVE NARRATIVE THREADS]\n" + "\n".join(thread_lines))
+
+    if alive_npcs:
+        npc_lines = [
+            f"• {n.name} (id={n.id}) — {n.role or 'unknown role'}, "
+            f"state: {n.current_state or 'normal'}, location: {n.current_location or 'unknown'}"
+            for n in alive_npcs
+        ]
+        parts.append("[AVAILABLE NPCs]\n" + "\n".join(npc_lines))
+
+    if places_all:
+        place_lines = [f"• {p.name} (id={p.id}): {p.description}" for p in places_all[:20]]
+        parts.append("[KNOWN PLACES]\n" + "\n".join(place_lines))
+
+    if key_facts:
+        fact_lines = [f"• {f.content}" for f in key_facts]
+        parts.append("[KEY WORLD FACTS]\n" + "\n".join(fact_lines))
+
+    prompt = "\n\n".join(parts) + "\n\nOutput ONLY the JSON object."
+
+    model = req.model_name \
+        or (getattr(campaign, "summary_model_name", None) if campaign else None) \
+        or (campaign.model_name if campaign else None) \
+        or config.ollama_model
+
+    log.info("suggest_scene: model=%s campaign=%s hint='%s'", model, campaign_id, hint_text[:60])
+
+    try:
+        payload_messages = [
+            {"role": "system", "content": _SUGGEST_SCENE_SYSTEM},
+            {"role": "user", "content": prompt},
+        ]
+        if config.provider == "ollama":
+            r = httpx.post(
+                f"{config.active_base_url().rstrip('/')}/api/chat",
+                json={
+                    "model": model,
+                    "messages": payload_messages,
+                    "stream": False,
+                    "think": False,
+                    "options": {"temperature": 0.7, "num_predict": 1024, "num_ctx": config.context_window},
+                },
+                timeout=httpx.Timeout(10.0, read=180.0),
+            )
+            r.raise_for_status()
+            raw = r.json()["message"]["content"].strip()
+        else:
+            r = httpx.post(
+                f"{config.active_base_url().rstrip('/')}/v1/chat/completions",
+                json={"model": model, "messages": payload_messages, "temperature": 0.7, "max_tokens": 1024, "stream": False},
+                timeout=httpx.Timeout(10.0, read=180.0),
+            )
+            r.raise_for_status()
+            raw = r.json()["choices"][0]["message"]["content"].strip()
+    except httpx.ConnectError:
+        raise HTTPException(503, f"Cannot reach {config.provider}. Is it running?")
+    except httpx.TimeoutException:
+        raise HTTPException(504, "Scene suggestion timed out. Try a faster model.")
+    except Exception as e:
+        raise HTTPException(503, f"Scene suggestion failed: {e}")
+
+    raw = _re.sub(r"<think>[\s\S]*?</think>", "", raw, flags=_re.IGNORECASE).strip()
+    data = _extract_json(raw)
+    parse_ok = bool(data)
+    if not parse_ok:
+        log.warning("suggest_scene: JSON parse failed. Raw:\n%s", raw[:1000])
+
+    # Build NPC name list for the suggested IDs so the UI can display them
+    npc_map = {n.id: n.name for n in npcs}
+    suggested_ids = [i for i in (data.get("npc_ids") or []) if i in npc_map]
+
+    return {
+        "title":     data.get("title", ""),
+        "location":  data.get("location", ""),
+        "npc_ids":   suggested_ids,
+        "npc_names": [npc_map[i] for i in suggested_ids],
+        "intent":    data.get("intent", ""),
+        "tone":      data.get("tone", ""),
+        "reasoning": data.get("reasoning", ""),
+        "_model":    model,
+        "_parse_ok": parse_ok,
+        "_raw":      raw[:500],
     }
 
 
@@ -6752,6 +7138,7 @@ def _thread_dict(t) -> dict:
         "description": t.description,
         "status": t.status.value if hasattr(t.status, "value") else t.status,
         "resolution": t.resolution,
+        "last_mentioned_scene": getattr(t, "last_mentioned_scene", 0),
         "created_at": t.created_at.isoformat(),
         "updated_at": t.updated_at.isoformat(),
     }

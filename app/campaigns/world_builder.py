@@ -56,24 +56,48 @@ def _ollama_generate(
     prompt: str,
     max_tokens: int = 4096,
     temperature: float = 0.8,
+    num_ctx: int = 16384,
+    api_type: str = "ollama",
 ) -> str:
-    """Simple blocking call to Ollama /api/chat."""
-    payload = {
-        "model": model,
-        "messages": [
-            {"role": "system", "content": system},
-            {"role": "user", "content": prompt},
-        ],
-        "stream": False,
-        "options": {
+    """
+    Blocking chat completion — dispatches to Ollama, LM Studio, or KoboldCPP
+    based on api_type.
+    """
+    messages = [{"role": "system", "content": system}, {"role": "user", "content": prompt}]
+
+    if api_type == "ollama":
+        payload = {
+            "model": model,
+            "messages": messages,
+            "stream": False,
+            "options": {
+                "temperature": temperature,
+                "num_predict": max_tokens,
+                "num_ctx": num_ctx,
+            },
+        }
+        r = httpx.post(f"{base_url.rstrip('/')}/api/chat", json=payload, timeout=180.0)
+        if r.status_code == 404:
+            raise RuntimeError(
+                f"Model '{model}' not found in Ollama. "
+                f"Check that it is pulled and the name is spelled correctly. "
+                f"(Ollama said: {r.text[:200]})"
+            )
+        r.raise_for_status()
+        return r.json()["message"]["content"].strip()
+    else:
+        # OpenAI-compatible endpoint (LM Studio or KoboldCPP)
+        openai_model = model if api_type == "lmstudio" else "koboldcpp"
+        payload = {
+            "model": openai_model,
+            "messages": messages,
             "temperature": temperature,
-            "num_predict": max_tokens,
-            "num_ctx": 8192,
-        },
-    }
-    r = httpx.post(f"{base_url.rstrip('/')}/api/chat", json=payload, timeout=180.0)
-    r.raise_for_status()
-    return r.json()["message"]["content"].strip()
+            "max_tokens": max_tokens,
+            "stream": False,
+        }
+        r = httpx.post(f"{base_url.rstrip('/')}/v1/chat/completions", json=payload, timeout=180.0)
+        r.raise_for_status()
+        return r.json()["choices"][0]["message"]["content"].strip()
 
 
 # ── System prompt ─────────────────────────────────────────────────────────────
@@ -181,9 +205,10 @@ class WorldBuilder:
         result = wb.refine(result, "npcs", "Add a corrupt city guard captain")
     """
 
-    def __init__(self, base_url: str, model: str) -> None:
+    def __init__(self, base_url: str, model: str, api_type: str = "ollama") -> None:
         self.base_url = base_url.rstrip("/")
         self.model = model
+        self.api_type = api_type
 
     # ── Core generation ───────────────────────────────────────────────────
 
@@ -204,6 +229,7 @@ class WorldBuilder:
             prompt=prompt,
             max_tokens=4096,
             temperature=0.85,
+            api_type=self.api_type,
         )
 
         data = _extract_json(raw)
@@ -246,6 +272,7 @@ class WorldBuilder:
             prompt=prompt,
             max_tokens=4096,
             temperature=0.75,
+            api_type=self.api_type,
         )
 
         data = _extract_json(raw)

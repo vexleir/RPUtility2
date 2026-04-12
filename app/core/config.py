@@ -27,7 +27,7 @@ class Config(BaseSettings):
     )
 
     # ── Provider settings ──────────────────────────────────────────────────
-    provider: Literal["ollama", "lmstudio"] = "ollama"
+    provider: Literal["ollama", "lmstudio", "koboldcpp"] = "ollama"
 
     # Ollama
     ollama_base_url: str = "http://localhost:11434"
@@ -37,16 +37,23 @@ class Config(BaseSettings):
     lmstudio_base_url: str = "http://localhost:1234"
     lmstudio_model: str = "local-model"   # usually auto-detected by LM Studio
 
+    # KoboldCPP — single model loaded at startup, no per-request model selection
+    koboldcpp_base_url: str = "http://localhost:5001"
+
     # ── Generation parameters ──────────────────────────────────────────────
     temperature: float = 0.8
     max_tokens: int = 1024
     context_window: int = 8192
 
     # ── Memory settings ────────────────────────────────────────────────────
-    max_retrieved_memories: int = 15
+    max_retrieved_memories: int = 20
     memory_extraction_enabled: bool = True
     # Model used for memory extraction (can be a smaller/faster model)
     extraction_model: str = ""   # empty = use same as main model
+
+    # Embedding model for semantic memory search (e.g. "nomic-embed-text")
+    embedding_model: str = ""    # empty = disabled; Ollama only
+    embedding_weight: float = 1.5
 
     # ── Conversation history window ────────────────────────────────────────
     # How many recent turns to keep in the prompt. Increase for longer sessions.
@@ -62,13 +69,15 @@ class Config(BaseSettings):
     retrieval_reference_half_life_days: float = 14.0
 
     # Per-type memory caps (0 = no cap)
-    max_memories_event: int = 6
-    max_memories_world_fact: int = 5
-    max_memories_character_detail: int = 5
-    max_memories_relationship_change: int = 4
-    max_memories_world_state: int = 4
-    max_memories_rumor: int = 2
-    max_memories_suspicion: int = 2
+    max_memories_event: int = 8
+    max_memories_world_fact: int = 6
+    max_memories_character_detail: int = 6
+    max_memories_relationship_change: int = 5
+    max_memories_world_state: int = 5
+    max_memories_rumor: int = 3
+    max_memories_suspicion: int = 3
+    # Turn-based recency decay
+    memory_turn_half_life: float = 40.0   # turns before recency score halves
 
     # ── Memory consolidation ───────────────────────────────────────────────
     consolidation_enabled: bool = True
@@ -119,7 +128,22 @@ class Config(BaseSettings):
         """Return the model name for the active provider."""
         if self.provider == "ollama":
             return self.ollama_model
-        return self.lmstudio_model
+        if self.provider == "lmstudio":
+            return self.lmstudio_model
+        # koboldcpp: model is set at load time, no name to report
+        return "koboldcpp"
+
+    def active_base_url(self) -> str:
+        """Return the base URL for the active provider."""
+        if self.provider == "ollama":
+            return self.ollama_base_url
+        if self.provider == "lmstudio":
+            return self.lmstudio_base_url
+        return self.koboldcpp_base_url
+
+    def supports_model_selection(self) -> bool:
+        """Return True if the provider allows choosing between multiple models."""
+        return self.provider in ("ollama", "lmstudio")
 
     def extraction_model_name(self) -> str:
         """Return the model to use for memory extraction."""

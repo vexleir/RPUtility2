@@ -610,18 +610,19 @@ function updateMemoryCount(count) {
   }
 }
 
-async function deleteMemory(memoryId) {
-  if (!confirm("Delete this memory? The AI will no longer know this fact.")) return;
-  try {
-    const res = await fetch(`/api/session/${SESSION_ID}/memories/${memoryId}`, { method: "DELETE" });
-    if (!res.ok) throw new Error();
-    const el = document.getElementById(`mem-${memoryId}`);
-    if (el) el.remove();
-    const count = parseInt($("#memory-count")?.textContent || "0") - 1;
-    updateMemoryCount(Math.max(0, count));
-  } catch {
-    showError("Failed to delete memory.");
-  }
+function deleteMemory(memoryId) {
+  showConfirm("Delete this memory? The AI will no longer know this fact.", async () => {
+    try {
+      const res = await fetch(`/api/session/${SESSION_ID}/memories/${memoryId}`, { method: "DELETE" });
+      if (!res.ok) throw new Error();
+      const el = document.getElementById(`mem-${memoryId}`);
+      if (el) el.remove();
+      const count = parseInt($("#memory-count")?.textContent || "0") - 1;
+      updateMemoryCount(Math.max(0, count));
+    } catch {
+      showError("Failed to delete memory.");
+    }
+  });
 }
 
 async function addCorrection() {
@@ -1084,18 +1085,19 @@ async function saveTurnEdit(turnId, btn) {
   }
 }
 
-async function deleteTurn(turnId, btn) {
-  if (!confirm("Delete this message? This cannot be undone.")) return;
-  btn.disabled = true;
-  try {
-    const res = await fetch(`/api/session/${SESSION_ID}/turns/${turnId}`, { method: "DELETE" });
-    if (!res.ok) throw new Error("Delete failed");
-    const msgDiv = btn.closest(".message");
-    msgDiv.remove();
-  } catch {
-    btn.disabled = false;
-    showError("Failed to delete turn.");
-  }
+function deleteTurn(turnId, btn) {
+  showConfirm("Delete this message? This cannot be undone.", async () => {
+    btn.disabled = true;
+    try {
+      const res = await fetch(`/api/session/${SESSION_ID}/turns/${turnId}`, { method: "DELETE" });
+      if (!res.ok) throw new Error("Delete failed");
+      const msgDiv = btn.closest(".message");
+      msgDiv.remove();
+    } catch {
+      btn.disabled = false;
+      showError("Failed to delete turn.");
+    }
+  });
 }
 
 // ── Recap banner ──────────────────────────────────────────────────────────────

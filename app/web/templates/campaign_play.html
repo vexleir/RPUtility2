@@ -131,6 +131,28 @@
         </div>
       </details>
 
+      <!-- ── AI Scene Suggester ──────────────────────────────────────── -->
+      <details class="scene-quickadd" id="qa-suggest-scene">
+        <summary class="scene-quickadd-summary">✨ AI Scene Suggester</summary>
+        <div class="scene-quickadd-body">
+          <p class="muted" style="font-size:0.85rem;margin-bottom:8px">
+            Describe what you want in the next scene, or leave blank for a surprise. The AI will suggest a scene that continues the story naturally.
+          </p>
+          <textarea id="suggest-scene-hint" class="wb-field" rows="2"
+            placeholder="e.g. 'I want to follow up on the missing merchant clue' or leave blank for a surprise…"></textarea>
+          <div style="display:flex;gap:8px;margin-top:8px;align-items:center">
+            <button class="btn btn-sm btn-primary" onclick="runSuggestScene()" id="suggest-scene-btn">✨ Suggest Scene</button>
+            <span id="suggest-scene-status" class="muted" style="font-size:0.8rem"></span>
+          </div>
+          <div id="suggest-scene-result" class="hidden" style="margin-top:12px;padding:10px;border:1px solid var(--border);border-radius:6px;background:var(--surface2)">
+            <div class="muted" style="font-size:0.75rem;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.5px">Suggested Scene</div>
+            <div id="ss-reasoning" class="muted" style="font-size:0.82rem;font-style:italic;margin-bottom:8px"></div>
+            <button class="btn btn-sm btn-primary" onclick="applySuggestedScene()">Use This Scene →</button>
+            <button class="btn btn-sm" onclick="document.getElementById('suggest-scene-result').classList.add('hidden')" style="margin-left:6px">Dismiss</button>
+          </div>
+        </div>
+      </details>
+
       <div style="display:flex;gap:12px;margin-top:16px">
         <button class="btn btn-primary" onclick="beginScene()" style="flex:1;justify-content:center">Begin Scene →</button>
         <a id="cancel-setup-link" href="/" class="btn" style="text-decoration:none">Cancel</a>

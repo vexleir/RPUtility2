@@ -355,6 +355,17 @@ select option { background: var(--surface2); }
   background: var(--surface2); font-size: 16px; cursor: default;
 }
 
+/* NPC quick-reference expandable card */
+.npc-quick-ref { flex-direction: column; align-items: stretch; }
+.npc-qr-header { display: flex; align-items: flex-start; gap: 8px; cursor: pointer; user-select: none; }
+.npc-qr-header:hover .sidebar-item-name { color: var(--accent-light); }
+.npc-qr-chevron { font-size: 12px; color: var(--text-dim); margin-left: auto; padding-top: 2px; flex-shrink: 0; }
+.npc-qr-details { padding: 6px 0 2px 44px; display: flex; flex-direction: column; gap: 4px; }
+.npc-qr-row { font-size: 11px; color: var(--text-muted); line-height: 1.4; }
+.npc-qr-label { font-weight: 600; color: var(--text-dim); margin-right: 4px; }
+.npc-qr-secret { color: var(--text-dim); font-style: italic; }
+.npc-qr-secret .npc-qr-label { color: #f59e0b; }
+
 /* Inventory sidebar */
 .sidebar-inv-item { padding: 7px 0; border-bottom: 1px solid var(--border); }
 .sidebar-inv-item:last-child { border-bottom: none; }
@@ -1386,6 +1397,8 @@ select option { background: var(--surface2); }
 .status-active  { background: #064e3b; color: var(--green); }
 .status-resolved { background: var(--accent-dim); color: var(--accent-light); }
 .status-dormant { background: #1c1c1c; color: var(--text-dim); }
+.thread-stale-badge { font-size: 10px; padding: 2px 6px; border-radius: 10px; vertical-align: middle; margin-left: 4px; background: #3b2a08; color: #f59e0b; }
+.thread-stale-badge.thread-stale-critical { background: #3b0808; color: #f87171; }
 
 /* NPC status badges (Phase 4) */
 .npc-status-badge { font-size: 10px; padding: 2px 6px; border-radius: 10px; vertical-align: middle; margin-left: 6px; font-weight: 600; }
@@ -1434,6 +1447,11 @@ select option { background: var(--surface2); }
 .wu-entity-detail { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
 .wu-new-entity { background: var(--surface2); border-radius: 6px; padding: 10px; margin-bottom: 4px; border-bottom: none; }
 .wu-new-entity:last-child { margin-bottom: 0; }
+
+/* God Prompt modal */
+.gp-section { margin-bottom: 12px; }
+.gp-section-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.6px; color: var(--text-dim); margin-bottom: 4px; padding-bottom: 4px; border-bottom: 1px solid var(--border); }
+.god-prompt-note { padding: 8px 12px; border-radius: 6px; background: var(--accent-dim); color: var(--accent-light); font-size: 12px; font-style: italic; margin-bottom: 12px; }
 
 /* NPC proposal cards (Story Impact modal) */
 .wu-npc-proposal-card {

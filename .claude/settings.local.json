@@ -59,7 +59,14 @@
       "Bash(python -c \"from app.web.campaign_routes import router; print\\('OK'\\)\")",
       "Read(//c/Users/devio/.claude/plans/**)",
       "Bash(ls \"c:/Antigravity Projects/RP Utility/app/web/static/\"*.css)",
-      "Bash(python -m pytest tests/test_scene.py --tb=short -q)"
+      "Bash(python -m pytest tests/test_scene.py --tb=short -q)",
+      "Bash(cp f:/Sandbox/RPUtility2/RPUtility/app/memory/campaign_store.py f:/Sandbox/RPUtility2/app/memory/campaign_store.py)",
+      "Bash(cp f:/Sandbox/RPUtility2/RPUtility/app/memory/embedder.py f:/Sandbox/RPUtility2/app/memory/embedder.py)",
+      "Bash(cp f:/Sandbox/RPUtility2/RPUtility/app/memory/profile_store.py f:/Sandbox/RPUtility2/app/memory/profile_store.py)",
+      "Bash(cp f:/Sandbox/RPUtility2/RPUtility/app/memory/profile_updater.py f:/Sandbox/RPUtility2/app/memory/profile_updater.py)",
+      "Bash(cp f:/Sandbox/RPUtility2/RPUtility/app/prompting/budget.py f:/Sandbox/RPUtility2/app/prompting/budget.py)",
+      "Bash(ls f:/Sandbox/RPUtility2/*.md f:/Sandbox/RPUtility2/*.txt)",
+      "Bash(python -m pytest tests/ -x -q --tb=short)"
     ],
     "additionalDirectories": [
       "c:\\Users\\devio\\.claude\\projects\\c--Antigravity-Projects-RP-Utility\\memory"

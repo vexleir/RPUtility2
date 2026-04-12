@@ -153,6 +153,72 @@ function renderNpcCheckboxes() {
   });
 }
 
+// ── Scene Suggester ───────────────────────────────────────────────────────────
+
+let _suggestedScene = null;
+
+async function runSuggestScene() {
+  const hint = document.getElementById("suggest-scene-hint").value.trim();
+  const btn = document.getElementById("suggest-scene-btn");
+  const status = document.getElementById("suggest-scene-status");
+  const result = document.getElementById("suggest-scene-result");
+
+  btn.disabled = true;
+  status.textContent = "Thinking…";
+  result.classList.add("hidden");
+
+  try {
+    const res = await fetch(`/api/campaigns/${CAMPAIGN_ID}/suggest-scene`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ hint }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+    if (!data._parse_ok || !data.title) {
+      status.textContent = "⚠ Could not parse a suggestion. Try again or add more world context.";
+      btn.disabled = false;
+      return;
+    }
+
+    _suggestedScene = data;
+    // Show reasoning
+    document.getElementById("ss-reasoning").textContent = data.reasoning || "";
+    result.classList.remove("hidden");
+    status.textContent = `Suggested: "${data.title}"`;
+  } catch (e) {
+    status.textContent = `Error: ${e.message}`;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function applySuggestedScene() {
+  if (!_suggestedScene) return;
+  const d = _suggestedScene;
+
+  // Fill in the scene setup form
+  if (d.title)    document.getElementById("setup-title").value = d.title;
+  if (d.location) document.getElementById("setup-location").value = d.location;
+  if (d.intent)   document.getElementById("setup-intent").value = d.intent;
+  if (d.tone)     document.getElementById("setup-tone").value = d.tone;
+
+  // Check suggested NPCs in the checkbox list
+  if (d.npc_ids && d.npc_ids.length) {
+    // Uncheck all first, then check suggested
+    document.querySelectorAll("#npc-checkboxes input[type=checkbox]").forEach(cb => {
+      cb.checked = d.npc_ids.includes(cb.value);
+    });
+  }
+
+  // Close the suggester panel and scroll to form
+  const suggestDetails = document.getElementById("qa-suggest-scene");
+  if (suggestDetails) suggestDetails.removeAttribute("open");
+  document.getElementById("setup-title").scrollIntoView({ behavior: "smooth", block: "nearest" });
+  document.getElementById("suggest-scene-result").classList.add("hidden");
+  document.getElementById("suggest-scene-status").textContent = "✓ Applied to form. Review and begin when ready.";
+}
+
 // ── Scene setup quick-add helpers ────────────────────────────────────────────
 
 async function qaGenerateNpc() {
@@ -291,26 +357,7 @@ async function qaAddFacts() {
 
 // ── Scene setup ───────────────────────────────────────────────────────────────
 
-async function beginScene() {
-  const title = document.getElementById("setup-title").value.trim();
-  const location = document.getElementById("setup-location").value.trim();
-  const intent = document.getElementById("setup-intent").value.trim();
-  const tone = document.getElementById("setup-tone").value.trim();
-  const npcIds = [...document.querySelectorAll("#npc-checkboxes input:checked")].map(c => c.value);
-  const allowUnselectedNpcs = document.getElementById("setup-allow-unselected-npcs").checked;
-
-  // Feature 3: conflict detection — warn about dead NPCs
-  const deadNames = npcIds
-    .map(id => _npcs.find(n => n.id === id))
-    .filter(n => n && !n.is_alive)
-    .map(n => n.name);
-  if (deadNames.length) {
-    const ok = confirm(
-      `Warning: the following NPCs are marked as deceased in the world document:\n\n${deadNames.join(", ")}\n\nAdd them to this scene anyway?`
-    );
-    if (!ok) return;
-  }
-
+async function _doBeginScene(title, location, intent, tone, npcIds, allowUnselectedNpcs) {
   try {
     const res = await fetch(`/api/campaigns/${CAMPAIGN_ID}/scenes`, {
       method: "POST",
@@ -325,6 +372,29 @@ async function beginScene() {
   } catch (e) {
     showError(`Could not start scene: ${e.message}`);
   }
+}
+
+function beginScene() {
+  const title = document.getElementById("setup-title").value.trim();
+  const location = document.getElementById("setup-location").value.trim();
+  const intent = document.getElementById("setup-intent").value.trim();
+  const tone = document.getElementById("setup-tone").value.trim();
+  const npcIds = [...document.querySelectorAll("#npc-checkboxes input:checked")].map(c => c.value);
+  const allowUnselectedNpcs = document.getElementById("setup-allow-unselected-npcs").checked;
+
+  // Feature 3: conflict detection — warn about dead NPCs
+  const deadNames = npcIds
+    .map(id => _npcs.find(n => n.id === id))
+    .filter(n => n && !n.is_alive)
+    .map(n => n.name);
+  if (deadNames.length) {
+    showConfirm(
+      `Warning: the following NPCs are marked as deceased:\n${deadNames.join(", ")}\n\nAdd them to this scene anyway?`,
+      () => _doBeginScene(title, location, intent, tone, npcIds, allowUnselectedNpcs)
+    );
+    return;
+  }
+  _doBeginScene(title, location, intent, tone, npcIds, allowUnselectedNpcs);
 }
 
 async function streamOpeningNarration() {
@@ -828,26 +898,26 @@ async function regenerate() {
   }
 }
 
-async function deleteScene() {
+function deleteScene() {
   if (!_scene) return;
   if (_scene.confirmed) {
     showError("Cannot delete a confirmed scene.");
     return;
   }
-  if (!confirm("Delete this scene? This cannot be undone.")) return;
-
-  try {
-    const res = await fetch(`/api/campaigns/${CAMPAIGN_ID}/scenes/${_scene.id}`, {
-      method: "DELETE",
-    });
-    if (!res.ok && res.status !== 204) {
-      const err = await res.json().catch(() => ({ detail: "Unknown error" }));
-      throw new Error(err.detail || `HTTP ${res.status}`);
+  showConfirm("Delete this scene? This cannot be undone.", async () => {
+    try {
+      const res = await fetch(`/api/campaigns/${CAMPAIGN_ID}/scenes/${_scene.id}`, {
+        method: "DELETE",
+      });
+      if (!res.ok && res.status !== 204) {
+        const err = await res.json().catch(() => ({ detail: "Unknown error" }));
+        throw new Error(err.detail || `HTTP ${res.status}`);
+      }
+      window.location.href = `/campaigns/${CAMPAIGN_ID}`;
+    } catch (e) {
+      showError(`Delete failed: ${e.message}`);
     }
-    window.location.href = `/campaigns/${CAMPAIGN_ID}`;
-  } catch (e) {
-    showError(`Delete failed: ${e.message}`);
-  }
+  });
 }
 
 // ── Message rendering ─────────────────────────────────────────────────────────
@@ -1297,7 +1367,11 @@ async function applyWorldUpdates() {
     await fetch(`/api/campaigns/${CAMPAIGN_ID}/threads`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...thread, status: u.new_status }),
+      body: JSON.stringify({
+        ...thread,
+        status: u.new_status,
+        last_mentioned_scene: _scene?.scene_number || thread.last_mentioned_scene || 0,
+      }),
     }).catch(() => {});
   }
 
@@ -1379,20 +1453,47 @@ function renderSidebar() {
   const sceneNpcIds = new Set(_scene?.npc_ids || []);
   const sceneNpcs = _npcs.filter(n => sceneNpcIds.has(n.id));
   if (sceneNpcs.length) {
-    npcContainer.innerHTML = sceneNpcs.map(n => {
+    npcContainer.innerHTML = "";
+    sceneNpcs.forEach(n => {
       const portraitHtml = n.portrait_image
         ? `<img src="${escHtml(n.portrait_image)}" class="sidebar-npc-portrait" alt="${escHtml(n.name)}" onclick="openPortraitLightbox('${escHtml(n.portrait_image)}','${escHtml(n.name)}')" title="Click to enlarge">`
         : `<div class="sidebar-npc-portrait sidebar-npc-portrait-placeholder">👤</div>`;
-      return `
-        <div class="sidebar-item sidebar-npc-item">
+
+      // Quick-reference detail rows
+      const detailRows = [
+        n.personality       ? `<div class="npc-qr-row"><span class="npc-qr-label">Personality</span> ${escHtml(n.personality.substring(0, 80))}${n.personality.length > 80 ? "…" : ""}</div>` : "",
+        n.relationship_to_player ? `<div class="npc-qr-row"><span class="npc-qr-label">To Player</span> ${escHtml(n.relationship_to_player.substring(0, 80))}${n.relationship_to_player.length > 80 ? "…" : ""}</div>` : "",
+        n.current_location  ? `<div class="npc-qr-row"><span class="npc-qr-label">Location</span> ${escHtml(n.current_location)}</div>` : "",
+        n.short_term_goal   ? `<div class="npc-qr-row"><span class="npc-qr-label">Goal</span> ${escHtml(n.short_term_goal.substring(0, 80))}${n.short_term_goal.length > 80 ? "…" : ""}</div>` : "",
+        n.secrets           ? `<div class="npc-qr-row npc-qr-secret"><span class="npc-qr-label">Secret</span> ${escHtml(n.secrets.substring(0, 100))}${n.secrets.length > 100 ? "…" : ""}</div>` : "",
+      ].filter(Boolean).join("");
+
+      const cardId = `npc-qr-${n.id.replace(/[^a-z0-9]/gi, "")}`;
+      const card = document.createElement("div");
+      card.className = "sidebar-item sidebar-npc-item npc-quick-ref";
+      card.innerHTML = `
+        <div class="npc-qr-header" data-target="${cardId}">
           ${portraitHtml}
-          <div style="min-width:0">
+          <div style="min-width:0;flex:1">
             <div class="sidebar-item-name">${escHtml(n.name)}</div>
             ${n.role ? `<div class="sidebar-item-sub muted">${escHtml(n.role)}</div>` : ""}
             ${n.current_state ? `<div class="sidebar-item-sub">${escHtml(n.current_state)}</div>` : ""}
           </div>
-        </div>`;
-    }).join("");
+          <span class="npc-qr-chevron">▾</span>
+        </div>
+        ${detailRows ? `<div id="${cardId}" class="npc-qr-details hidden">${detailRows}</div>` : ""}`;
+
+      // Toggle expand on header click
+      card.querySelector(".npc-qr-header").addEventListener("click", () => {
+        const details = document.getElementById(cardId);
+        if (!details) return;
+        const open = !details.classList.contains("hidden");
+        details.classList.toggle("hidden", open);
+        card.querySelector(".npc-qr-chevron").textContent = open ? "▾" : "▴";
+      });
+
+      npcContainer.appendChild(card);
+    });
   } else {
     npcContainer.innerHTML = '<div class="muted" style="font-size:0.8rem">No NPCs in this scene.</div>';
   }
@@ -1400,12 +1501,21 @@ function renderSidebar() {
   // Threads
   const threadContainer = document.getElementById("sidebar-threads");
   if (_threads.length) {
-    threadContainer.innerHTML = _threads.map(t => `
+    threadContainer.innerHTML = _threads.map(t => {
+      const sceneNum = _scene?.scene_number || 0;
+      const mentionedAt = t.last_mentioned_scene || 0;
+      const gap = mentionedAt && sceneNum > mentionedAt ? sceneNum - mentionedAt : 0;
+      const staleBadge = gap >= 5
+        ? `<span class="thread-stale-badge thread-stale-critical" title="${gap} scenes since last advanced">${gap} scenes ago</span>`
+        : gap >= 3
+        ? `<span class="thread-stale-badge" title="${gap} scenes since last advanced">${gap} scenes ago</span>`
+        : "";
+      return `
       <div class="sidebar-item">
-        <div class="sidebar-item-name">${escHtml(t.title)}</div>
+        <div class="sidebar-item-name">${escHtml(t.title)}${staleBadge}</div>
         ${t.description ? `<div class="sidebar-item-sub muted">${escHtml(t.description.substring(0, 80))}${t.description.length > 80 ? "…" : ""}</div>` : ""}
-      </div>
-    `).join("");
+      </div>`;
+    }).join("");
   } else {
     threadContainer.innerHTML = '<div class="muted" style="font-size:0.8rem">No active threads.</div>';
   }

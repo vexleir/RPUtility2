@@ -1,5 +1,5 @@
 {
-  "id": "c3e10cfa-d03f-4cd3-8891-4eeab034736e",
+  "id": "5046f87d-778a-4b7f-9b3b-d717e7ea5d5d",
   "slug": "healing-word",
   "name": "Healing Word",
   "category": "spell",
@@ -20,6 +20,6 @@
   },
   "applies_conditions": [],
   "is_builtin": false,
-  "created_at": "2026-04-11T00:45:11.014370+00:00",
-  "updated_at": "2026-04-11T00:45:11.014371+00:00"
+  "created_at": "2026-04-12T16:06:43.233289+00:00",
+  "updated_at": "2026-04-12T16:06:43.233290+00:00"
 }

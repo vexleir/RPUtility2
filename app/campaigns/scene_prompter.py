@@ -16,6 +16,8 @@ from app.campaigns.procedures import world_time_snapshot
 from app.core.models import PlayMode
 from app.rules.procedures.gm_flow import build_gm_procedure_guidance
 from app.rules.registry import get_system_pack, list_rulebooks
+from app.prompting.budget import apply_context_budget
+from app.core.config import config as _global_config
 
 # Maximum chronicle entries sent to AI. When the total exceeds this, we keep
 # the first CHRON_ANCHOR entries (world-setting context) and the last
@@ -42,6 +44,88 @@ _TURN_LABEL_RE = _re.compile(r"^\s*-?\s*\[Turn\s+\d+(?:[–\-]\d+)?\]\s*", _re.I
 def _compress_chronicle(text: str) -> str:
     """Remove [Turn N] prefixes from a confirmed chronicle entry before injecting into context."""
     return _TURN_LABEL_RE.sub("- ", text).strip()
+
+
+def _select_chronicle_entries(sorted_entries: list, recent_text: str) -> list:
+    """
+    Select chronicle entries to inject when the total exceeds _CHRON_THRESHOLD.
+
+    Strategy (two modes):
+      1. Semantic (when Ollama embedding model is configured):
+         Always keep the first entry (world-setting anchor) and the last 2
+         (recency).  Fill remaining slots with the top-scoring entries by
+         cosine similarity to recent_text.  Falls back to heuristic on any error.
+      2. Heuristic fallback:
+         Keep first _CHRON_ANCHOR entries + last _CHRON_TAIL entries.
+    """
+    from app.memory.embedder import embed_text, cosine_similarity
+
+    anchor_count = _CHRON_ANCHOR
+    tail_count   = _CHRON_TAIL
+    total_budget = anchor_count + tail_count   # same total as heuristic
+
+    anchor = sorted_entries[:anchor_count]
+    tail   = sorted_entries[-2:]               # always keep last 2 for recency
+    anchor_ids = {e.id for e in anchor}
+    tail_ids   = {e.id for e in tail}
+    middle     = [e for e in sorted_entries if e.id not in anchor_ids and e.id not in tail_ids]
+
+    if not middle:
+        # Nothing to pick from — just return anchor + de-duped tail
+        seen: set = set()
+        result = []
+        for e in anchor + tail:
+            if e.id not in seen:
+                result.append(e)
+                seen.add(e.id)
+        return result
+
+    # Try semantic scoring if embedding model is configured
+    semantic_ok = False
+    if _global_config.embedding_model and _global_config.provider == "ollama" and recent_text.strip():
+        try:
+            query_vec = embed_text(
+                recent_text[:800],
+                _global_config.ollama_base_url,
+                _global_config.embedding_model,
+            )
+            if query_vec:
+                scored = []
+                for e in middle:
+                    entry_vec = embed_text(
+                        e.content[:600],
+                        _global_config.ollama_base_url,
+                        _global_config.embedding_model,
+                    )
+                    sim = cosine_similarity(query_vec, entry_vec) if entry_vec else 0.0
+                    scored.append((e, sim))
+                scored.sort(key=lambda x: x[1], reverse=True)
+
+                fill_slots = max(0, total_budget - anchor_count - len(tail))
+                selected_middle = [e for e, _ in scored[:fill_slots]]
+                selected_middle.sort(key=lambda e: e.scene_range_start)
+                semantic_ok = True
+
+                seen_ids: set = set()
+                result_sem = []
+                for e in anchor + selected_middle + tail:
+                    if e.id not in seen_ids:
+                        result_sem.append(e)
+                        seen_ids.add(e.id)
+                return result_sem
+        except Exception:
+            pass  # fall through to heuristic
+
+    if not semantic_ok:
+        # Heuristic fallback: first _CHRON_ANCHOR + last _CHRON_TAIL
+        heuristic_tail = [e for e in sorted_entries[-tail_count:] if e.id not in anchor_ids]
+        seen_h: set = set()
+        result_h = []
+        for e in anchor + heuristic_tail:
+            if e.id not in seen_h:
+                result_h.append(e)
+                seen_h.add(e.id)
+        return result_h
 
 
 def _fact_is_active(fact, recent_text: str) -> bool:
@@ -81,6 +165,8 @@ def build_scene_messages(
     scene,
     user_message: str,
     user_name: str = "Player",
+    campaign_memories: list = [],
+    character_profiles: list = [],
 ) -> list[dict]:
     """
     Return an Ollama-compatible messages list for one turn of scene play.
@@ -99,9 +185,21 @@ def build_scene_messages(
                            places, factions, npc_relationships, scene,
                            all_world_npcs=all_world_npcs,
                            allow_unselected_npcs=allow_unselected_npcs,
-                           recent_text=recent_text)
+                           recent_text=recent_text,
+                           campaign_memories=campaign_memories,
+                           character_profiles=character_profiles)
 
     messages: list[dict] = [{"role": "system", "content": system}]
+
+    # ── Scene working memory (R2.5) ──────────────────────────────────────────
+    # If the scene has an extracted event log, inject it right after the system
+    # prompt so key earlier events remain visible even when turn history is trimmed.
+    if scene and scene.scene_event_log:
+        event_text = "\n".join(f"• {e}" for e in scene.scene_event_log)
+        messages.append({
+            "role": "system",
+            "content": f"[EARLIER IN THIS SCENE — key events so far]\n{event_text}",
+        })
 
     # ── Rolling scene summary ────────────────────────────────────────────────
     # If the scene has accumulated many turns, keep only the most recent
@@ -124,12 +222,12 @@ def build_scene_messages(
             messages.append({"role": turn.role, "content": turn.content})
 
     # Current player input
-    if user_name and user_name.lower() not in ("player", "user", ""):
+    if user_name and user_name.lower() not in ("player", "user", "", "__continue__"):
         messages.append({"role": "user", "content": f"[{user_name}]: {user_message}"})
     else:
         messages.append({"role": "user", "content": user_message})
 
-    return messages
+    return apply_context_budget(messages, _global_config.context_window)
 
 
 def _build_system(
@@ -151,6 +249,8 @@ def _build_system(
     all_world_npcs: list = [],
     allow_unselected_npcs: bool = False,
     recent_text: str = "",
+    campaign_memories: list = [],
+    character_profiles: list = [],
 ) -> str:
     parts: list[str] = []
 
@@ -166,6 +266,11 @@ def _build_system(
         "Your role is to play the world — narrate events, voice NPCs, describe consequences.",
         "You do NOT play the player character. Respond to what the player does.",
         "Keep responses immersive, vivid, and grounded in the world document below.",
+        "",
+        "WORLD FIDELITY RULES:",
+        "- [WORLD FACTS] and [STORY SO FAR] are the established truth of this world. Never contradict or undo them.",
+        "- You may freely invent new lore, NPC backstory, history, and detail — but only if it does not conflict with what is already established.",
+        "- If something has already happened in the story, treat it as fixed fact.",
     ]
     if style:
         role_lines.append(f"Narration style: {style}")
@@ -247,11 +352,11 @@ def _build_system(
             cat = (f.category or "").strip()
             grouped[cat].append(f)
 
-        fact_block_lines = ["[WORLD FACTS]"]
+        fact_block_lines = ["[WORLD FACTS — established truth; do not contradict these]"]
         # Critical facts always at top under a CRITICAL marker
         critical = [f for f in fact_texts if f.priority == "critical"]
         if critical:
-            fact_block_lines.append("  [CRITICAL — always true]")
+            fact_block_lines.append("  [CRITICAL — never contradict]")
             for f in critical:
                 fact_block_lines.append(f"• {f.content}")
 
@@ -278,13 +383,9 @@ def _build_system(
         if len(confirmed_sorted) <= _CHRON_THRESHOLD:
             recap = confirmed_sorted
         else:
-            anchor = confirmed_sorted[:_CHRON_ANCHOR]
-            tail = confirmed_sorted[-_CHRON_TAIL:]
-            anchor_ids = {e.id for e in anchor}
-            tail = [e for e in tail if e.id not in anchor_ids]
-            recap = anchor + tail
+            recap = _select_chronicle_entries(confirmed_sorted, recent_text)
 
-        chron_lines = ["[STORY SO FAR]"]
+        chron_lines = ["[STORY SO FAR — events that have already occurred; treat as fixed history]"]
         if len(confirmed_sorted) > _CHRON_THRESHOLD:
             skipped = len(confirmed_sorted) - len(recap)
             if skipped > 0:
@@ -297,6 +398,48 @@ def _build_system(
             chron_lines.append(f"[{label}]\n{_compress_chronicle(e.content)}")
         parts.append("\n".join(chron_lines))
 
+    # ── Campaign memories (extracted from past scenes) ────────────────────────
+    if campaign_memories:
+        from app.core.models import ImportanceLevel, CertaintyLevel
+
+        crit_mems = [m for m in campaign_memories if m.importance == ImportanceLevel.CRITICAL]
+        epic_mems = [m for m in campaign_memories if m.importance != ImportanceLevel.CRITICAL]
+
+        if crit_mems:
+            crit_lines = ["[CRITICAL STORY FACTS — must never be contradicted]"]
+            for m in crit_mems:
+                crit_lines.append(f"  !! {m.title}: {m.content}")
+            parts.append("\n".join(crit_lines))
+
+        if epic_mems:
+            mem_lines = ["[STORY MEMORIES — established facts from previous scenes]"]
+            for m in epic_mems:
+                cert = ""
+                if m.certainty == CertaintyLevel.RUMOR:
+                    cert = " [RUMOR]"
+                elif m.certainty == CertaintyLevel.SUSPICION:
+                    cert = " [SUSPICION]"
+                elif m.certainty == CertaintyLevel.LIE:
+                    cert = " [LIE]"
+                entities_tag = f" ({', '.join(m.entities)})" if m.entities else ""
+                mem_lines.append(f"  • {m.title}{cert}{entities_tag}: {m.content}")
+            parts.append("\n".join(mem_lines))
+
+    # ── Character Memory Profiles ─────────────────────────────────────────────
+    if character_profiles:
+        profile_lines = ["[CHARACTER PROFILES — accumulated history; treat as established fact]"]
+        for p in character_profiles:
+            profile_lines.append(f"\n{p.character_name}:")
+            if p.profile_summary:
+                profile_lines.append(f"  {p.profile_summary}")
+            if p.confirmed_traits:
+                profile_lines.append(f"  Established traits: {'; '.join(p.confirmed_traits)}")
+            if p.known_secrets:
+                profile_lines.append(f"  Secrets known to player: {'; '.join(p.known_secrets)}")
+            if p.last_known_state:
+                profile_lines.append(f"  Current state: {p.last_known_state}")
+        parts.append("\n".join(profile_lines))
+
     # ── Player character ──────────────────────────────────────────────────────
     if player_character and player_character.name:
         pc = player_character
@@ -307,8 +450,8 @@ def _build_system(
         if pc.wants:         pc_lines.append(f"Wants: {pc.wants}")
         if pc.fears:         pc_lines.append(f"Fears: {pc.fears}")
         if pc.dev_log:
-            recent = pc.dev_log[-3:]
-            pc_lines.append("Recent development:")
+            recent = pc.dev_log[-8:]
+            pc_lines.append("Character development:")
             for entry in recent:
                 label = f"Scene {entry.scene_number}: " if entry.scene_number else ""
                 pc_lines.append(f"  • {label}{entry.note}")
@@ -374,16 +517,18 @@ def _build_system(
             if curr_state:    line += f" | Currently: {curr_state}"
             npc_block.append(line)
 
+            if appearance:
+                npc_block.append(f"  Appearance: {appearance}")
+
             # If in a different form, note original identity
             if active_form:
                 orig_parts = []
-                if n.appearance:  orig_parts.append(f"appearance: {n.appearance}")
-                if n.personality: orig_parts.append(f"personality: {n.personality}")
+                if n.appearance and n.appearance != appearance:
+                    orig_parts.append(f"appearance: {n.appearance}")
+                if n.personality and n.personality != personality:
+                    orig_parts.append(f"personality: {n.personality}")
                 if orig_parts:
                     npc_block.append(f"  Original form: {'; '.join(orig_parts)}")
-
-            if appearance and appearance != (active_form.appearance if active_form else ""):
-                pass  # already shown via personality line above
 
             if n.relationship_to_player:
                 npc_block.append(f"  Relationship to {pc_name}: {n.relationship_to_player}")

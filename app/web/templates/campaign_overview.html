@@ -35,6 +35,7 @@
       </div>
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn btn-sm btn-primary" onclick="openGodPrompt()" title="Send natural-language commands to instantly update the world">⚡ God Prompt</button>
       <button class="btn btn-sm" onclick="openImgGen('campaign')">🎨 Campaign Image</button>
       <button class="btn btn-sm" onclick="openSearchModal()">🔍 Search</button>
       <button class="btn btn-sm" onclick="openStatsModal()">📊 Stats</button>
@@ -976,6 +977,148 @@
           <button class="btn btn-primary" onclick="confirmImportCard()">Import NPC →</button>
           <button class="btn" onclick="closeModal('import-card-modal')">Cancel</button>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- God Prompt modal -->
+  <div id="god-prompt-modal" class="modal-backdrop hidden">
+    <div class="modal" style="max-width:680px">
+      <div class="modal-header">
+        <span>⚡ God Prompt</span>
+        <button class="modal-close" onclick="closeModal('god-prompt-modal')">✕</button>
+      </div>
+      <div class="modal-body" id="god-prompt-body">
+        <p class="muted" style="font-size:0.85rem;margin-bottom:12px">
+          Give the AI a natural-language instruction to change the world. It will propose structured changes for you to review before anything is applied.
+        </p>
+        <div id="god-prompt-input-area">
+          <textarea id="god-prompt-instruction" class="wb-field" rows="4"
+            placeholder="e.g. 'Lyra now distrusts the player after the betrayal at the docks' or 'Add a new NPC: a mysterious fence named Crow who operates out of the lower city' or 'Mark the Merchant Guild investigation thread as dormant — the trail has gone cold'"></textarea>
+          <div style="display:flex;gap:8px;margin-top:8px;align-items:center">
+            <button class="btn btn-primary" onclick="runGodPrompt()" id="god-prompt-run-btn">✨ Generate Changes</button>
+            <span id="god-prompt-status" class="muted" style="font-size:0.85rem"></span>
+          </div>
+        </div>
+
+        <!-- Suggestions area (hidden until AI responds) -->
+        <div id="god-prompt-suggestions" class="hidden" style="margin-top:16px">
+          <div id="god-prompt-note" class="god-prompt-note hidden"></div>
+
+          <div id="gp-update-npcs-section" class="hidden gp-section">
+            <div class="gp-section-title">Update NPCs</div>
+            <div id="gp-update-npcs-list"></div>
+          </div>
+          <div id="gp-create-npcs-section" class="hidden gp-section">
+            <div class="gp-section-title">Create NPCs</div>
+            <div id="gp-create-npcs-list"></div>
+          </div>
+          <div id="gp-delete-npcs-section" class="hidden gp-section">
+            <div class="gp-section-title">Delete NPCs</div>
+            <div id="gp-delete-npcs-list"></div>
+          </div>
+          <div id="gp-create-facts-section" class="hidden gp-section">
+            <div class="gp-section-title">New World Facts</div>
+            <div id="gp-create-facts-list"></div>
+          </div>
+          <div id="gp-update-facts-section" class="hidden gp-section">
+            <div class="gp-section-title">Update World Facts</div>
+            <div id="gp-update-facts-list"></div>
+          </div>
+          <div id="gp-delete-facts-section" class="hidden gp-section">
+            <div class="gp-section-title">Delete World Facts</div>
+            <div id="gp-delete-facts-list"></div>
+          </div>
+          <div id="gp-threads-section" class="hidden gp-section">
+            <div class="gp-section-title">Narrative Threads</div>
+            <div id="gp-threads-list"></div>
+          </div>
+          <div id="gp-quests-section" class="hidden gp-section">
+            <div class="gp-section-title">Quests</div>
+            <div id="gp-quests-list"></div>
+          </div>
+          <div id="gp-places-section" class="hidden gp-section">
+            <div class="gp-section-title">Places</div>
+            <div id="gp-places-list"></div>
+          </div>
+          <div id="gp-factions-section" class="hidden gp-section">
+            <div class="gp-section-title">Factions</div>
+            <div id="gp-factions-list"></div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer hidden" id="god-prompt-footer">
+        <button class="btn btn-primary" onclick="applyGodPrompt()">Apply Selected</button>
+        <button class="btn" onclick="resetGodPrompt()">← New Instruction</button>
+        <button class="btn" onclick="closeModal('god-prompt-modal')">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Level-up modal -->
+  <div id="levelup-modal" class="modal-backdrop hidden">
+    <div class="modal" style="max-width:500px">
+      <div class="modal-header">
+        <span>Level Up Character</span>
+        <button class="modal-close" onclick="closeModal('levelup-modal')">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label>Advance to level</label>
+          <input type="number" class="wb-field" id="levelup-target" min="1" max="20">
+        </div>
+        <div class="form-group">
+          <label>HP gained this level</label>
+          <input type="number" class="wb-field" id="levelup-hp" min="0" value="0">
+        </div>
+        <div class="form-group">
+          <label>Ability increases <span class="muted" style="font-weight:normal">JSON object, e.g. {"strength": 2}</span></label>
+          <input type="text" class="wb-field" id="levelup-abilities" placeholder="{}" value="{}">
+        </div>
+        <div class="form-group">
+          <label>Resource pool increases <span class="muted" style="font-weight:normal">JSON object, e.g. {"spell_slots": 1}</span></label>
+          <input type="text" class="wb-field" id="levelup-resources" placeholder="{}" value="{}">
+        </div>
+        <div class="form-group">
+          <label>Feature gained <span class="muted" style="font-weight:normal">(optional)</span></label>
+          <input type="text" class="wb-field" id="levelup-feature" placeholder="e.g. Extra Attack, Uncanny Dodge">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-primary" onclick="applyLevelUp()">Level Up</button>
+        <button class="btn" onclick="closeModal('levelup-modal')">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Quick-build modal -->
+  <div id="quickbuild-modal" class="modal-backdrop hidden">
+    <div class="modal" style="max-width:460px">
+      <div class="modal-header">
+        <span>Quick-Build Character</span>
+        <button class="modal-close" onclick="closeModal('quickbuild-modal')">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label>Character name</label>
+          <input type="text" class="wb-field" id="qb-name">
+        </div>
+        <div class="form-group">
+          <label>Class <span class="muted" id="qb-class-hint" style="font-weight:normal"></span></label>
+          <input type="text" class="wb-field" id="qb-class" placeholder="fighter">
+        </div>
+        <div class="form-group">
+          <label>Ancestry <span class="muted" id="qb-ancestry-hint" style="font-weight:normal"></span></label>
+          <input type="text" class="wb-field" id="qb-ancestry" placeholder="human">
+        </div>
+        <div class="form-group">
+          <label>Background <span class="muted" id="qb-background-hint" style="font-weight:normal"></span></label>
+          <input type="text" class="wb-field" id="qb-background" placeholder="wanderer">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-primary" onclick="applyQuickBuild()">Build Character</button>
+        <button class="btn" onclick="closeModal('quickbuild-modal')">Cancel</button>
       </div>
     </div>
   </div>

@@ -1,5 +1,5 @@
 {
-  "id": "a989dff7-f000-4e47-a699-6532ac0c63c1",
+  "id": "f1f8467a-60c0-4b12-a9db-0cbc8b928c07",
   "slug": "second-wind",
   "name": "Second Wind",
   "category": "action",
@@ -18,6 +18,6 @@
   "resource_costs": {},
   "applies_conditions": [],
   "is_builtin": false,
-  "created_at": "2026-04-11T00:45:11.021022+00:00",
-  "updated_at": "2026-04-11T00:45:11.021024+00:00"
+  "created_at": "2026-04-12T16:06:43.238987+00:00",
+  "updated_at": "2026-04-12T16:06:43.238989+00:00"
 }

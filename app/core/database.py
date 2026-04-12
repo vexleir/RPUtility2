@@ -65,6 +65,18 @@ def _migrate(conn: sqlite3.Connection) -> None:
         except Exception:
             pass  # column already exists
 
+    # R2.1 — embedding vector for semantic memory retrieval (BLOB; nullable)
+    try:
+        conn.execute("ALTER TABLE memories ADD COLUMN embedding BLOB")
+    except Exception:
+        pass  # column already exists
+
+    # R2.2 — turn number when the memory was extracted (for turn-based recency decay)
+    try:
+        conn.execute("ALTER TABLE memories ADD COLUMN source_turn_number INTEGER NOT NULL DEFAULT 0")
+    except Exception:
+        pass  # column already exists
+
     # v2 → v3 (Phase 2): world_state table
     # Note: SQLite does not support adding FK constraints via ALTER TABLE.
     # Tables created here for the first time include FKs; existing tables retain
@@ -785,6 +797,60 @@ def _migrate(conn: sqlite3.Connection) -> None:
         )
     """)
 
+    # Memory Intelligence — campaign_memories: structured MemoryEntry objects extracted
+    # from scene transcripts at scene end.  Scoped by campaign_id (stored in session_id col).
+    # Same schema as the session `memories` table so CampaignMemoryStore can reuse the
+    # same row-to-model helper.
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS campaign_memories (
+            id                  TEXT PRIMARY KEY,
+            session_id          TEXT NOT NULL,
+            created_at          TEXT NOT NULL,
+            updated_at          TEXT NOT NULL,
+            type                TEXT NOT NULL,
+            title               TEXT NOT NULL,
+            content             TEXT NOT NULL,
+            entities            TEXT NOT NULL DEFAULT '[]',
+            location            TEXT,
+            tags                TEXT NOT NULL DEFAULT '[]',
+            importance          TEXT NOT NULL DEFAULT 'medium',
+            last_referenced_at  TEXT,
+            source_turn_ids     TEXT NOT NULL DEFAULT '[]',
+            source_turn_number  INTEGER NOT NULL DEFAULT 0,
+            confidence          REAL NOT NULL DEFAULT 1.0,
+            certainty           TEXT NOT NULL DEFAULT 'confirmed',
+            consolidated_from   TEXT NOT NULL DEFAULT '[]',
+            contradiction_of    TEXT,
+            archived            INTEGER NOT NULL DEFAULT 0,
+            embedding           BLOB
+        )
+    """)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_campaign_memories_session ON campaign_memories(session_id)"
+    )
+
+    # Character Memory Profiles — one row per character per campaign.
+    # Maintained by the profile updater after each scene confirmation.
+    # Injected into the scene prompt whenever that character is active.
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS character_profiles (
+            id                  TEXT PRIMARY KEY,
+            campaign_id         TEXT NOT NULL,
+            character_name      TEXT NOT NULL,
+            confirmed_traits    TEXT NOT NULL DEFAULT '[]',
+            known_secrets       TEXT NOT NULL DEFAULT '[]',
+            last_known_state    TEXT NOT NULL DEFAULT '',
+            profile_summary     TEXT NOT NULL DEFAULT '',
+            source_scene_numbers TEXT NOT NULL DEFAULT '[]',
+            updated_at          TEXT NOT NULL,
+            UNIQUE(campaign_id, character_name)
+        )
+    """)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_character_profiles_campaign "
+        "ON character_profiles(campaign_id)"
+    )
+
     # Fresh-DB compatibility: some additive columns were historically added
     # before the base campaign tables were created, so ensure they exist here too.
     for col_def in [
@@ -846,6 +912,32 @@ def _migrate(conn: sqlite3.Connection) -> None:
         except Exception:
             pass
 
+    # R2.5 — scene working memory: rolling event log for long scenes
+    for _col in [
+        "scene_event_log TEXT NOT NULL DEFAULT '[]'",
+        "event_log_through_turn INTEGER NOT NULL DEFAULT 0",
+    ]:
+        try:
+            conn.execute(f"ALTER TABLE campaign_scenes ADD COLUMN {_col}")
+        except Exception:
+            pass  # column already exists
+
+    # R6.1 — auto-chronicle draft generated in background every N AI turns
+    try:
+        conn.execute("ALTER TABLE campaign_scenes ADD COLUMN proposed_draft TEXT NOT NULL DEFAULT ''")
+    except Exception:
+        pass  # column already exists
+
+    # R5.5 — World fact undo: store previous content before each edit
+    for _col in [
+        "previous_content TEXT",
+        "edited_at TEXT",
+    ]:
+        try:
+            conn.execute(f"ALTER TABLE campaign_world_facts ADD COLUMN {_col}")
+        except Exception:
+            pass  # column already exists
+
     for col_def in [
         "standing_with_player TEXT NOT NULL DEFAULT ''",
         "relationship_notes TEXT NOT NULL DEFAULT ''",
@@ -862,6 +954,27 @@ def _migrate(conn: sqlite3.Connection) -> None:
             conn.execute(f"ALTER TABLE campaign_events ADD COLUMN {col_def}")
         except Exception:
             pass
+
+    # Thread staleness — scene number when thread was last advanced/referenced
+    try:
+        conn.execute(
+            "ALTER TABLE narrative_threads ADD COLUMN last_mentioned_scene INTEGER NOT NULL DEFAULT 0"
+        )
+    except Exception:
+        pass  # column already exists
+
+    # Indexes for campaign-scoped lookups — placed after all CREATE TABLEs above
+    for _idx in [
+        "CREATE INDEX IF NOT EXISTS idx_scenes_campaign ON campaign_scenes(campaign_id)",
+        "CREATE INDEX IF NOT EXISTS idx_npc_cards_campaign ON npc_cards(campaign_id)",
+        "CREATE INDEX IF NOT EXISTS idx_world_facts_campaign ON campaign_world_facts(campaign_id)",
+        "CREATE INDEX IF NOT EXISTS idx_places_campaign ON campaign_places(campaign_id)",
+        "CREATE INDEX IF NOT EXISTS idx_threads_campaign ON narrative_threads(campaign_id)",
+        "CREATE INDEX IF NOT EXISTS idx_chronicle_campaign ON chronicle_entries(campaign_id)",
+        "CREATE INDEX IF NOT EXISTS idx_factions_campaign ON campaign_factions(campaign_id)",
+        "CREATE INDEX IF NOT EXISTS idx_npc_relationships_campaign ON npc_relationships(campaign_id)",
+    ]:
+        conn.execute(_idx)
 
 
 def _create_tables(conn: sqlite3.Connection) -> None:

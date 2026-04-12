@@ -207,6 +207,23 @@ function renderPcCard() {
   `;
 }
 
+function _threadStalenessBadge(thread) {
+  if (thread.status !== "active") return "";
+  const confirmedScenes = _scenes.filter(s => s.confirmed);
+  if (!confirmedScenes.length) return "";
+  const maxScene = Math.max(...confirmedScenes.map(s => s.scene_number));
+  const mentionedAt = thread.last_mentioned_scene || 0;
+  if (!mentionedAt) {
+    // Never explicitly mentioned — show warning once there are 3+ confirmed scenes
+    if (maxScene >= 3) return `<span class="thread-stale-badge" title="Never advanced">dormant</span>`;
+    return "";
+  }
+  const gap = maxScene - mentionedAt;
+  if (gap >= 5) return `<span class="thread-stale-badge thread-stale-critical" title="${gap} scenes since last advanced">${gap} scenes ago</span>`;
+  if (gap >= 3) return `<span class="thread-stale-badge" title="${gap} scenes since last advanced">${gap} scenes ago</span>`;
+  return "";
+}
+
 function renderEntityList(containerId, items, openFn, type) {
   const container = document.getElementById(containerId);
   container.innerHTML = "";
@@ -219,8 +236,9 @@ function renderEntityList(containerId, items, openFn, type) {
     div.className = "entity-card";
     const name = item.name || item.title || "(unnamed)";
     const sub  = item.role || item.description || item.status || "";
-    const badge = type === "thread" && item.status ?
-      `<span class="thread-status-badge status-${item.status}">${item.status}</span>` : "";
+    const badge = type === "thread" && item.status
+      ? `<span class="thread-status-badge status-${item.status}">${item.status}</span>${_threadStalenessBadge(item)}`
+      : "";
     div.innerHTML = `
       <div class="entity-card-row">
         <div>
@@ -279,17 +297,18 @@ function renderScenesList() {
   });
 }
 
-async function reopenScene(sceneId) {
-  if (!confirm("Reopen this scene? It will become active again and you can continue playing or editing it.")) return;
-  try {
-    const res = await fetch(`/api/campaigns/${CAMPAIGN_ID}/scenes/${sceneId}/reopen`, { method: "POST" });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const updated = await res.json();
-    const idx = _scenes.findIndex(s => s.id === sceneId);
-    if (idx >= 0) _scenes[idx] = updated;
-    renderScenesList();
-    showBanner("Scene reopened. Click ▶ Continue to resume.", "success");
-  } catch (e) { showBanner(`Reopen failed: ${e.message}`, "error"); }
+function reopenScene(sceneId) {
+  showConfirm("Reopen this scene? It will become active again and you can continue playing or editing it.", async () => {
+    try {
+      const res = await fetch(`/api/campaigns/${CAMPAIGN_ID}/scenes/${sceneId}/reopen`, { method: "POST" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const updated = await res.json();
+      const idx = _scenes.findIndex(s => s.id === sceneId);
+      if (idx >= 0) _scenes[idx] = updated;
+      renderScenesList();
+      showBanner("Scene reopened. Click ▶ Continue to resume.", "success");
+    } catch (e) { showBanner(`Reopen failed: ${e.message}`, "error"); }
+  });
 }
 
 let _editSummarySceneId = null;
@@ -570,11 +589,12 @@ async function saveFactEdit() {
   } catch (e) { showBanner(`Save failed: ${e.message}`, "error"); }
 }
 
-async function deleteFact(factId) {
-  if (!confirm("Delete this fact?")) return;
-  await fetch(`/api/campaigns/${CAMPAIGN_ID}/world-facts/${factId}`, { method: "DELETE" });
-  _facts = _facts.filter(f => f.id !== factId);
-  renderAll();
+function deleteFact(factId) {
+  showConfirm("Delete this world fact?", async () => {
+    await fetch(`/api/campaigns/${CAMPAIGN_ID}/world-facts/${factId}`, { method: "DELETE" });
+    _facts = _facts.filter(f => f.id !== factId);
+    renderAll();
+  });
 }
 
 // ── Scene transcript viewer ───────────────────────────────────────────────────
@@ -636,14 +656,15 @@ async function saveChronicleEdit() {
   } catch (e) { showBanner(`Save failed: ${e.message}`, "error"); }
 }
 
-async function deleteChronicleEntry(entryId) {
-  if (!confirm("Delete this chronicle entry? This cannot be undone.")) return;
-  try {
-    const res = await fetch(`/api/campaigns/${CAMPAIGN_ID}/chronicle/${entryId}`, { method: "DELETE" });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    _chronicle = _chronicle.filter(e => e.id !== entryId);
-    renderChronicle();
-  } catch (e) { showBanner(`Delete failed: ${e.message}`, "error"); }
+function deleteChronicleEntry(entryId) {
+  showConfirm("Delete this chronicle entry? This cannot be undone.", async () => {
+    try {
+      const res = await fetch(`/api/campaigns/${CAMPAIGN_ID}/chronicle/${entryId}`, { method: "DELETE" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      _chronicle = _chronicle.filter(e => e.id !== entryId);
+      renderChronicle();
+    } catch (e) { showBanner(`Delete failed: ${e.message}`, "error"); }
+  });
 }
 
 // ── Chronicle compression ──────────────────────────────────────────────────────
@@ -956,14 +977,16 @@ async function saveNpc() {
   } catch (e) { showBanner(`Save failed: ${e.message}`, "error"); }
 }
 
-async function deleteNpc() {
+function deleteNpc() {
   const id = document.getElementById("npc-id").value;
-  if (!id || !confirm("Delete this NPC?")) return;
-  await fetch(`/api/campaigns/${CAMPAIGN_ID}/npcs/${id}`, { method: "DELETE" });
-  _npcs = _npcs.filter(n => n.id !== id);
-  _relationships = _relationships.filter(r => r.npc_id_a !== id && r.npc_id_b !== id);
-  closeModal("npc-modal");
-  renderAll();
+  if (!id) return;
+  showConfirm("Delete this NPC?", async () => {
+    await fetch(`/api/campaigns/${CAMPAIGN_ID}/npcs/${id}`, { method: "DELETE" });
+    _npcs = _npcs.filter(n => n.id !== id);
+    _relationships = _relationships.filter(r => r.npc_id_a !== id && r.npc_id_b !== id);
+    closeModal("npc-modal");
+    renderAll();
+  });
 }
 
 // ── NPC Forms management ─────────────────────────────────────────────────────
@@ -1048,10 +1071,11 @@ function saveNpcForm() {
 }
 
 function deleteNpcForm(index) {
-  if (!confirm("Delete this form?")) return;
-  _modalForms.splice(index, 1);
-  const currentActive = document.getElementById("npc-active-form").value;
-  _renderNpcForms(_modalForms, currentActive);
+  showConfirm("Delete this form?", () => {
+    _modalForms.splice(index, 1);
+    const currentActive = document.getElementById("npc-active-form").value;
+    _renderNpcForms(_modalForms, currentActive);
+  });
 }
 
 // ── NPC Relationship editor ───────────────────────────────────────────────────
@@ -1108,13 +1132,15 @@ async function saveRelationship() {
   } catch (e) { showBanner(`Save failed: ${e.message}`, "error"); }
 }
 
-async function deleteRelationship() {
+function deleteRelationship() {
   const id = document.getElementById("rel-id").value;
-  if (!id || !confirm("Delete this relationship?")) return;
-  await fetch(`/api/campaigns/${CAMPAIGN_ID}/npc-relationships/${id}`, { method: "DELETE" });
-  _relationships = _relationships.filter(r => r.id !== id);
-  closeModal("rel-modal");
-  renderAll();
+  if (!id) return;
+  showConfirm("Delete this relationship?", async () => {
+    await fetch(`/api/campaigns/${CAMPAIGN_ID}/npc-relationships/${id}`, { method: "DELETE" });
+    _relationships = _relationships.filter(r => r.id !== id);
+    closeModal("rel-modal");
+    renderAll();
+  });
 }
 
 // ── Place editor ──────────────────────────────────────────────────────────────
@@ -1150,13 +1176,15 @@ async function savePlace() {
   } catch (e) { showBanner(`Save failed: ${e.message}`, "error"); }
 }
 
-async function deletePlace() {
+function deletePlace() {
   const id = document.getElementById("place-id").value;
-  if (!id || !confirm("Delete this place?")) return;
-  await fetch(`/api/campaigns/${CAMPAIGN_ID}/places/${id}`, { method: "DELETE" });
-  _places = _places.filter(p => p.id !== id);
-  closeModal("place-modal");
-  renderAll();
+  if (!id) return;
+  showConfirm("Delete this place?", async () => {
+    await fetch(`/api/campaigns/${CAMPAIGN_ID}/places/${id}`, { method: "DELETE" });
+    _places = _places.filter(p => p.id !== id);
+    closeModal("place-modal");
+    renderAll();
+  });
 }
 
 // ── Thread editor ─────────────────────────────────────────────────────────────
@@ -1193,13 +1221,15 @@ async function saveThread() {
   } catch (e) { showBanner(`Save failed: ${e.message}`, "error"); }
 }
 
-async function deleteThread() {
+function deleteThread() {
   const id = document.getElementById("thread-id").value;
-  if (!id || !confirm("Delete this thread?")) return;
-  await fetch(`/api/campaigns/${CAMPAIGN_ID}/threads/${id}`, { method: "DELETE" });
-  _threads = _threads.filter(t => t.id !== id);
-  closeModal("thread-modal");
-  renderAll();
+  if (!id) return;
+  showConfirm("Delete this thread?", async () => {
+    await fetch(`/api/campaigns/${CAMPAIGN_ID}/threads/${id}`, { method: "DELETE" });
+    _threads = _threads.filter(t => t.id !== id);
+    closeModal("thread-modal");
+    renderAll();
+  });
 }
 
 // ── Faction editor ────────────────────────────────────────────────────────────
@@ -1240,13 +1270,15 @@ async function saveFaction() {
   } catch (e) { showBanner(`Save failed: ${e.message}`, "error"); }
 }
 
-async function deleteFaction() {
+function deleteFaction() {
   const id = document.getElementById("faction-id").value;
-  if (!id || !confirm("Delete this faction?")) return;
-  await fetch(`/api/campaigns/${CAMPAIGN_ID}/factions/${id}`, { method: "DELETE" });
-  _factions = _factions.filter(f => f.id !== id);
-  closeModal("faction-modal");
-  renderAll();
+  if (!id) return;
+  showConfirm("Delete this faction?", async () => {
+    await fetch(`/api/campaigns/${CAMPAIGN_ID}/factions/${id}`, { method: "DELETE" });
+    _factions = _factions.filter(f => f.id !== id);
+    closeModal("faction-modal");
+    renderAll();
+  });
 }
 
 // ── PC editor ─────────────────────────────────────────────────────────────────
@@ -1382,38 +1414,41 @@ async function savePc() {
   } catch (e) { showBanner(`Save failed: ${e.message}`, "error"); }
 }
 
-async function levelUpPc() {
+function levelUpPc() {
   if (!_sheet) {
     showBanner("Create the rules sheet first.", "warning");
     return;
   }
-  const nextLevelDefault = (_sheet.level || 1) + 1;
-  const targetLevelRaw = window.prompt("Advance to what level?", String(nextLevelDefault));
-  if (targetLevelRaw === null) return;
-  const targetLevel = parseInt(targetLevelRaw, 10);
-  if (!Number.isFinite(targetLevel) || targetLevel <= (_sheet.level || 1)) {
+  const nextLevel = (_sheet.level || 1) + 1;
+  document.getElementById("levelup-target").value = nextLevel;
+  document.getElementById("levelup-hp").value = "0";
+  document.getElementById("levelup-abilities").value = "{}";
+  document.getElementById("levelup-resources").value = "{}";
+  document.getElementById("levelup-feature").value = "";
+  openModal("levelup-modal");
+  setTimeout(() => document.getElementById("levelup-target").focus(), 50);
+}
+
+async function applyLevelUp() {
+  const targetLevel = parseInt(document.getElementById("levelup-target").value, 10);
+  const hitPointGain = parseInt(document.getElementById("levelup-hp").value, 10);
+  if (!Number.isFinite(targetLevel) || targetLevel <= (_sheet?.level || 1)) {
     showBanner("Enter a level higher than the current level.", "warning");
     return;
   }
-  const hpGainRaw = window.prompt("HP gained this level?", "0");
-  if (hpGainRaw === null) return;
-  const hitPointGain = parseInt(hpGainRaw, 10);
   if (!Number.isFinite(hitPointGain) || hitPointGain < 0) {
     showBanner("HP gain must be zero or greater.", "warning");
     return;
   }
-
-  let abilityIncreases = {};
-  let resourcePoolIncreases = {};
+  let abilityIncreases = {}, resourcePoolIncreases = {};
   try {
-    abilityIncreases = JSON.parse(window.prompt('Ability increases JSON (optional)', '{}') || "{}");
-    resourcePoolIncreases = JSON.parse(window.prompt('Resource pool increases JSON (optional)', '{}') || "{}");
+    abilityIncreases = JSON.parse(document.getElementById("levelup-abilities").value || "{}");
+    resourcePoolIncreases = JSON.parse(document.getElementById("levelup-resources").value || "{}");
   } catch {
-    showBanner("Level-up JSON inputs must be valid JSON objects.", "warning");
+    showBanner("Ability/resource fields must be valid JSON objects.", "warning");
     return;
   }
-  const featureNote = (window.prompt("Feature note (optional)", "") || "").trim();
-
+  const featureNote = document.getElementById("levelup-feature").value.trim();
   try {
     const res = await fetch(`/api/campaigns/${CAMPAIGN_ID}/character-sheets/player/player/level-up`, {
       method: "POST",
@@ -1429,6 +1464,7 @@ async function levelUpPc() {
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
     _sheet = data.sheet;
+    closeModal("levelup-modal");
     openEditPc();
     renderAll();
     showBanner(data.summary || `Leveled to ${targetLevel}.`, "success");
@@ -1443,38 +1479,384 @@ async function quickBuildPc() {
     const options = await optionsRes.json().catch(() => ({}));
     if (!optionsRes.ok) throw new Error(options.detail || `HTTP ${optionsRes.status}`);
 
-    const name = (window.prompt("Character name", _pc?.name || _sheet?.name || "Adventurer") || "").trim();
-    if (!name) return;
-    const classHint = (options.classes || []).join(" / ");
-    const ancestryHint = (options.ancestries || []).join(" / ");
-    const backgroundHint = (options.backgrounds || []).join(" / ");
-    const characterClass = (window.prompt(`Class? ${classHint}`, _sheet?.character_class?.toLowerCase() || "fighter") || "").trim().toLowerCase();
-    if (!characterClass) return;
-    const ancestry = (window.prompt(`Ancestry? ${ancestryHint}`, _sheet?.ancestry?.toLowerCase() || "human") || "").trim().toLowerCase();
-    if (!ancestry) return;
-    const background = (window.prompt(`Background? ${backgroundHint}`, _sheet?.background?.toLowerCase() || "wanderer") || "").trim().toLowerCase();
-    if (background === null) return;
+    // Pre-fill and show modal
+    document.getElementById("qb-name").value = _pc?.name || _sheet?.name || "Adventurer";
+    document.getElementById("qb-class").value = _sheet?.character_class?.toLowerCase() || "fighter";
+    document.getElementById("qb-ancestry").value = _sheet?.ancestry?.toLowerCase() || "human";
+    document.getElementById("qb-background").value = _sheet?.background?.toLowerCase() || "wanderer";
+    document.getElementById("qb-class-hint").textContent = (options.classes || []).join(" / ");
+    document.getElementById("qb-ancestry-hint").textContent = (options.ancestries || []).join(" / ");
+    document.getElementById("qb-background-hint").textContent = (options.backgrounds || []).join(" / ");
 
+    openModal("quickbuild-modal");
+    setTimeout(() => document.getElementById("qb-name").focus(), 50);
+  } catch (e) {
+    showBanner(`Quick build failed: ${e.message}`, "error");
+  }
+}
+
+async function applyQuickBuild() {
+  const name = document.getElementById("qb-name").value.trim();
+  const characterClass = document.getElementById("qb-class").value.trim().toLowerCase();
+  const ancestry = document.getElementById("qb-ancestry").value.trim().toLowerCase();
+  const background = document.getElementById("qb-background").value.trim().toLowerCase();
+  if (!name) { showBanner("Character name is required.", "warning"); return; }
+  if (!characterClass) { showBanner("Class is required.", "warning"); return; }
+  if (!ancestry) { showBanner("Ancestry is required.", "warning"); return; }
+  try {
     const res = await fetch(`/api/campaigns/${CAMPAIGN_ID}/character-sheets/player/player/quick-build`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        name,
-        character_class: characterClass,
-        ancestry,
-        background,
-        level: 1,
-      }),
+      body: JSON.stringify({ name, character_class: characterClass, ancestry, background, level: 1 }),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
     _sheet = data.sheet;
     if (data.player_character) _pc = data.player_character;
+    closeModal("quickbuild-modal");
     openEditPc();
     renderAll();
     showBanner(data.summary || "Quick build complete.", "success");
   } catch (e) {
     showBanner(`Quick build failed: ${e.message}`, "error");
+  }
+}
+
+// ── God Prompt ────────────────────────────────────────────────────────────────
+
+let _gpSuggestions = null;
+
+function openGodPrompt() {
+  resetGodPrompt();
+  openModal("god-prompt-modal");
+  setTimeout(() => document.getElementById("god-prompt-instruction").focus(), 50);
+}
+
+function resetGodPrompt() {
+  _gpSuggestions = null;
+  document.getElementById("god-prompt-instruction").value = "";
+  document.getElementById("god-prompt-status").textContent = "";
+  document.getElementById("god-prompt-run-btn").disabled = false;
+  document.getElementById("god-prompt-input-area").classList.remove("hidden");
+  document.getElementById("god-prompt-suggestions").classList.add("hidden");
+  document.getElementById("god-prompt-footer").classList.add("hidden");
+  document.getElementById("god-prompt-note").classList.add("hidden");
+}
+
+async function runGodPrompt() {
+  const instruction = document.getElementById("god-prompt-instruction").value.trim();
+  if (!instruction) { showBanner("Enter an instruction first.", "warning"); return; }
+
+  const btn = document.getElementById("god-prompt-run-btn");
+  const status = document.getElementById("god-prompt-status");
+  btn.disabled = true;
+  status.textContent = "Thinking…";
+
+  try {
+    const res = await fetch(`/api/campaigns/${CAMPAIGN_ID}/god-prompt`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ instruction }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+    if (!data._parse_ok) {
+      status.textContent = "⚠ AI response could not be parsed. Try rephrasing.";
+      btn.disabled = false;
+      return;
+    }
+
+    _gpSuggestions = data;
+    _renderGodPromptSuggestions(data);
+    document.getElementById("god-prompt-input-area").classList.add("hidden");
+    document.getElementById("god-prompt-suggestions").classList.remove("hidden");
+    document.getElementById("god-prompt-footer").classList.remove("hidden");
+    status.textContent = "";
+  } catch (e) {
+    status.textContent = `Error: ${e.message}`;
+    btn.disabled = false;
+  }
+}
+
+function _gpItem(label, sub, cbClass, idx) {
+  return `<label class="wu-item">
+    <input type="checkbox" class="${cbClass}" data-index="${idx}" checked>
+    <div class="wu-item-text">
+      <strong>${escHtml(label)}</strong>
+      ${sub ? `<div class="wu-reason muted">${escHtml(sub)}</div>` : ""}
+    </div>
+  </label>`;
+}
+
+function _renderGodPromptSuggestions(d) {
+  // Narrative note
+  const noteEl = document.getElementById("god-prompt-note");
+  if (d.narrative_note) {
+    noteEl.textContent = d.narrative_note;
+    noteEl.classList.remove("hidden");
+  }
+
+  function _populateSection(sectionId, listId, items, renderFn) {
+    const section = document.getElementById(sectionId);
+    const list = document.getElementById(listId);
+    if (items && items.length) {
+      list.innerHTML = items.map((item, i) => renderFn(item, i)).join("");
+      section.classList.remove("hidden");
+    } else {
+      section.classList.add("hidden");
+    }
+  }
+
+  _populateSection("gp-update-npcs-section", "gp-update-npcs-list", d.update_npcs, (u, i) =>
+    _gpItem(`${u.npc_name}: set ${u.field} → "${u.new_value}"`, u.reason, "gp-update-npc-cb", i));
+
+  _populateSection("gp-create-npcs-section", "gp-create-npcs-list", d.create_npcs, (u, i) =>
+    _gpItem(`Create NPC: ${u.name}${u.role ? ` (${u.role})` : ""}`, u.reason, "gp-create-npc-cb", i));
+
+  _populateSection("gp-delete-npcs-section", "gp-delete-npcs-list", d.delete_npcs, (u, i) =>
+    _gpItem(`Delete NPC: ${u.npc_name}`, u.reason, "gp-delete-npc-cb", i));
+
+  _populateSection("gp-create-facts-section", "gp-create-facts-list", d.create_facts, (u, i) =>
+    _gpItem(u.content, u.reason, "gp-create-fact-cb", i));
+
+  _populateSection("gp-update-facts-section", "gp-update-facts-list", d.update_facts, (u, i) =>
+    _gpItem(`"${u.old_content}" → "${u.new_content}"`, u.reason, "gp-update-fact-cb", i));
+
+  _populateSection("gp-delete-facts-section", "gp-delete-facts-list", d.delete_facts, (u, i) =>
+    _gpItem(`Delete fact: "${u.content}"`, u.reason, "gp-delete-fact-cb", i));
+
+  // Threads: combine create + update + delete
+  const allThreadItems = [];
+  (d.create_threads || []).forEach((u, i) =>
+    allThreadItems.push(_gpItem(`Create thread: "${u.title}"`, u.reason, "gp-create-thread-cb", i)));
+  (d.update_threads || []).forEach((u, i) =>
+    allThreadItems.push(_gpItem(
+      `Update "${u.title}"${u.new_status ? ` → ${u.new_status}` : ""}`,
+      u.reason, "gp-update-thread-cb", i)));
+  (d.delete_threads || []).forEach((u, i) =>
+    allThreadItems.push(_gpItem(`Delete thread: "${u.title}"`, u.reason, "gp-delete-thread-cb", i)));
+
+  const threadSection = document.getElementById("gp-threads-section");
+  const threadList = document.getElementById("gp-threads-list");
+  if (allThreadItems.length) {
+    threadList.innerHTML = allThreadItems.join("");
+    threadSection.classList.remove("hidden");
+  } else {
+    threadSection.classList.add("hidden");
+  }
+
+  // Quests
+  const questItems = [
+    ...(d.create_quests || []).map((u, i) =>
+      _gpItem(`Create quest: "${u.title}"`, u.reason, "gp-create-quest-cb", i)),
+    ...(d.update_quests || []).map((u, i) =>
+      _gpItem(`"${u.title}" → ${u.new_status}`, u.reason, "gp-update-quest-cb", i)),
+  ];
+  const questSection = document.getElementById("gp-quests-section");
+  const questList = document.getElementById("gp-quests-list");
+  if (questItems.length) {
+    questList.innerHTML = questItems.join("");
+    questSection.classList.remove("hidden");
+  } else {
+    questSection.classList.add("hidden");
+  }
+
+  // Places
+  const placeItems = [
+    ...(d.create_places || []).map((u, i) =>
+      _gpItem(`Create place: "${u.name}"`, u.reason, "gp-create-place-cb", i)),
+    ...(d.update_places || []).map((u, i) =>
+      _gpItem(`Update "${u.name}": set ${u.field} → "${u.new_value}"`, u.reason, "gp-update-place-cb", i)),
+  ];
+  const placeSection = document.getElementById("gp-places-section");
+  const placeList = document.getElementById("gp-places-list");
+  if (placeItems.length) {
+    placeList.innerHTML = placeItems.join("");
+    placeSection.classList.remove("hidden");
+  } else {
+    placeSection.classList.add("hidden");
+  }
+
+  // Factions
+  const factionItems = [
+    ...(d.create_factions || []).map((u, i) =>
+      _gpItem(`Create faction: "${u.name}"`, u.reason, "gp-create-faction-cb", i)),
+    ...(d.update_factions || []).map((u, i) =>
+      _gpItem(`Update "${u.name}": set ${u.field} → "${u.new_value}"`, u.reason, "gp-update-faction-cb", i)),
+  ];
+  const factionSection = document.getElementById("gp-factions-section");
+  const factionList = document.getElementById("gp-factions-list");
+  if (factionItems.length) {
+    factionList.innerHTML = factionItems.join("");
+    factionSection.classList.remove("hidden");
+  } else {
+    factionSection.classList.add("hidden");
+  }
+}
+
+async function applyGodPrompt() {
+  if (!_gpSuggestions) return;
+  const d = _gpSuggestions;
+  const applyBtn = document.querySelector("#god-prompt-footer .btn-primary");
+  applyBtn.disabled = true;
+  applyBtn.textContent = "Applying…";
+
+  const checked = (cls) =>
+    [...document.querySelectorAll(`.${cls}:checked`)].map(cb => parseInt(cb.dataset.index));
+
+  try {
+    // Update NPCs
+    for (const i of checked("gp-update-npc-cb")) {
+      const u = d.update_npcs[i];
+      const npc = _npcs.find(n => n.id === u.npc_id);
+      if (!npc) continue;
+      await fetch(`/api/campaigns/${CAMPAIGN_ID}/npcs`, {
+        method: "PUT", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...npc, [u.field]: u.new_value }),
+      }).catch(() => {});
+    }
+
+    // Create NPCs
+    for (const i of checked("gp-create-npc-cb")) {
+      const u = d.create_npcs[i];
+      await fetch(`/api/campaigns/${CAMPAIGN_ID}/npcs`, {
+        method: "PUT", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(u),
+      }).catch(() => {});
+    }
+
+    // Delete NPCs
+    for (const i of checked("gp-delete-npc-cb")) {
+      const u = d.delete_npcs[i];
+      await fetch(`/api/campaigns/${CAMPAIGN_ID}/npcs/${u.npc_id}`, { method: "DELETE" }).catch(() => {});
+    }
+
+    // Create facts
+    const newFactContents = checked("gp-create-fact-cb").map(i => d.create_facts[i].content);
+    if (newFactContents.length) {
+      const existingContents = _facts.map(f => f.content);
+      await fetch(`/api/campaigns/${CAMPAIGN_ID}/world-facts`, {
+        method: "PUT", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ facts: [...existingContents, ...newFactContents] }),
+      }).catch(() => {});
+    }
+
+    // Update facts (PATCH individual fact)
+    for (const i of checked("gp-update-fact-cb")) {
+      const u = d.update_facts[i];
+      await fetch(`/api/campaigns/${CAMPAIGN_ID}/world-facts/${u.fact_id}`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content: u.new_content }),
+      }).catch(() => {});
+    }
+
+    // Delete facts
+    for (const i of checked("gp-delete-fact-cb")) {
+      const u = d.delete_facts[i];
+      await fetch(`/api/campaigns/${CAMPAIGN_ID}/world-facts/${u.fact_id}`, { method: "DELETE" }).catch(() => {});
+    }
+
+    // Create threads
+    for (const i of checked("gp-create-thread-cb")) {
+      const u = d.create_threads[i];
+      await fetch(`/api/campaigns/${CAMPAIGN_ID}/threads`, {
+        method: "PUT", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: u.title, description: u.description, status: "active" }),
+      }).catch(() => {});
+    }
+
+    // Update threads
+    for (const i of checked("gp-update-thread-cb")) {
+      const u = d.update_threads[i];
+      const thread = _threads.find(t => t.id === u.thread_id);
+      if (!thread) continue;
+      await fetch(`/api/campaigns/${CAMPAIGN_ID}/threads`, {
+        method: "PUT", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...thread,
+          description: u.description || thread.description,
+          status: u.new_status || thread.status,
+          resolution: u.resolution || thread.resolution,
+        }),
+      }).catch(() => {});
+    }
+
+    // Delete threads
+    for (const i of checked("gp-delete-thread-cb")) {
+      const u = d.delete_threads[i];
+      await fetch(`/api/campaigns/${CAMPAIGN_ID}/threads/${u.thread_id}`, { method: "DELETE" }).catch(() => {});
+    }
+
+    // Create quests
+    for (const i of checked("gp-create-quest-cb")) {
+      const u = d.create_quests[i];
+      await fetch(`/api/campaigns/${CAMPAIGN_ID}/quests`, {
+        method: "PUT", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: u.title, description: u.description, giver_npc_name: u.giver_npc_name || "", importance: u.importance || "medium", status: "active" }),
+      }).catch(() => {});
+    }
+
+    // Update quests (fetch current quest state to merge)
+    const questsToUpdate = checked("gp-update-quest-cb").map(i => d.update_quests[i]);
+    if (questsToUpdate.length) {
+      const allQuests = await fetch(`/api/campaigns/${CAMPAIGN_ID}/quests`).then(r => r.json()).catch(() => []);
+      for (const u of questsToUpdate) {
+        const quest = allQuests.find(q => q.id === u.quest_id);
+        if (!quest) continue;
+        await fetch(`/api/campaigns/${CAMPAIGN_ID}/quests`, {
+          method: "PUT", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...quest, status: u.new_status }),
+        }).catch(() => {});
+      }
+    }
+
+    // Create places
+    for (const i of checked("gp-create-place-cb")) {
+      const u = d.create_places[i];
+      await fetch(`/api/campaigns/${CAMPAIGN_ID}/places`, {
+        method: "PUT", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: u.name, description: u.description, current_state: u.current_state || "" }),
+      }).catch(() => {});
+    }
+
+    // Update places
+    for (const i of checked("gp-update-place-cb")) {
+      const u = d.update_places[i];
+      const place = _places.find(p => p.id === u.place_id);
+      if (!place) continue;
+      await fetch(`/api/campaigns/${CAMPAIGN_ID}/places`, {
+        method: "PUT", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...place, [u.field]: u.new_value }),
+      }).catch(() => {});
+    }
+
+    // Create factions
+    for (const i of checked("gp-create-faction-cb")) {
+      const u = d.create_factions[i];
+      await fetch(`/api/campaigns/${CAMPAIGN_ID}/factions`, {
+        method: "PUT", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: u.name, description: u.description, goals: u.goals || "", standing_with_player: u.standing_with_player || "" }),
+      }).catch(() => {});
+    }
+
+    // Update factions
+    for (const i of checked("gp-update-faction-cb")) {
+      const u = d.update_factions[i];
+      const faction = _factions.find(f => f.id === u.faction_id);
+      if (!faction) continue;
+      await fetch(`/api/campaigns/${CAMPAIGN_ID}/factions`, {
+        method: "PUT", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...faction, [u.field]: u.new_value }),
+      }).catch(() => {});
+    }
+
+    closeModal("god-prompt-modal");
+    await loadWorld();
+    showBanner("God Prompt applied successfully.", "success");
+  } catch (e) {
+    showBanner(`Apply failed: ${e.message}`, "error");
+    applyBtn.disabled = false;
+    applyBtn.textContent = "Apply Selected";
   }
 }
 
@@ -1727,10 +2109,11 @@ async function saveEditCampaign() {
   } catch (e) { showBanner(`Save failed: ${e.message}`, "error"); }
 }
 
-async function confirmDeleteCampaign() {
-  if (!confirm(`Delete campaign "${_campaign?.name}"? This cannot be undone.`)) return;
-  await fetch(`/api/campaigns/${CAMPAIGN_ID}`, { method: "DELETE" });
-  window.location.href = "/";
+function confirmDeleteCampaign() {
+  showConfirm(`Delete campaign "${_campaign?.name}"? This cannot be undone.`, async () => {
+    await fetch(`/api/campaigns/${CAMPAIGN_ID}`, { method: "DELETE" });
+    window.location.href = "/";
+  });
 }
 
 // ── Play navigation ───────────────────────────────────────────────────────────

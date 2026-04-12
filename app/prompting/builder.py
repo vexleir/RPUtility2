@@ -47,6 +47,7 @@ from app.core.models import (
     LocationEntry,
 )
 from app.core.config import Config
+from app.prompting.budget import apply_context_budget
 
 
 # ── Core system instructions ──────────────────────────────────────────────────
@@ -133,30 +134,36 @@ def build_messages(
     """
     system_parts: list[str] = [_CORE_INSTRUCTIONS]
 
-    # 1. Character card
-    system_parts.append(_format_character_card(card, user_name=user_name))
-
-    # 2. Lorebook entries
-    if lorebook_entries:
-        system_parts.append(_format_lorebook(lorebook_entries))
-
-    # 3. World-state (Phase 2 — placed before episodic memories)
-    if world_state:
-        system_parts.append(_format_world_state(world_state, config))
-
-    # 4 & 5. Memories — split critical (guaranteed) from episodic
+    # Split memories into critical and episodic up front — critical facts
+    # are placed at both the TOP (position 2) and BOTTOM of the system prompt
+    # to exploit the model's primacy and recency attention bias.
+    critical: list[MemoryEntry] = []
+    episodic: list[MemoryEntry] = []
     if memories:
         critical = [m for m in memories if m.importance == ImportanceLevel.CRITICAL]
         episodic = [m for m in memories if m.importance != ImportanceLevel.CRITICAL]
 
-        if critical:
-            system_parts.append(_format_critical_facts(critical))
+    # 1. Critical facts — near top so they anchor the model's attention first
+    if critical:
+        system_parts.append(_format_critical_facts(critical))
 
-        if episodic:
-            if config.memory_injection_mode == "soft":
-                system_parts.append(_format_memories_soft(episodic))
-            else:
-                system_parts.append(_format_memories_raw(episodic))
+    # 2. Character card
+    system_parts.append(_format_character_card(card, user_name=user_name))
+
+    # 3. Lorebook entries
+    if lorebook_entries:
+        system_parts.append(_format_lorebook(lorebook_entries))
+
+    # 4. World-state (durable world facts from memory)
+    if world_state:
+        system_parts.append(_format_world_state(world_state, config))
+
+    # 5. Episodic memories (non-critical)
+    if episodic:
+        if config.memory_injection_mode == "soft":
+            system_parts.append(_format_memories_soft(episodic))
+        else:
+            system_parts.append(_format_memories_raw(episodic))
 
     # 6. Relationships
     if relationships:
@@ -210,17 +217,21 @@ def build_messages(
         if active:
             system_parts.append(_format_quests(active))
 
+    # 18. Critical facts repeated at the bottom — recency attention boost
+    if critical:
+        system_parts.append(_format_critical_facts_brief(critical))
+
     system_content = "\n\n".join(system_parts)
     messages: list[dict] = [{"role": "system", "content": system_content}]
 
-    # 8. Conversation history (resolve any template vars left in stored turns)
+    # Conversation history (resolve any template vars left in stored turns)
     for turn in history:
         messages.append({"role": turn.role, "content": _resolve_vars(turn.content, card.name, user_name)})
 
-    # 9. Current user message
+    # Current user message
     messages.append({"role": "user", "content": user_message})
 
-    return messages
+    return apply_context_budget(messages, config.context_window)
 
 
 # ── Section formatters ────────────────────────────────────────────────────────
@@ -278,6 +289,15 @@ def _format_critical_facts(memories: list[MemoryEntry]) -> str:
     for m in memories:
         certainty_tag = _certainty_tag(m)
         lines.append(f"  !! {m.title}{certainty_tag}: {m.content}")
+    return "\n".join(lines)
+
+
+def _format_critical_facts_brief(memories: list[MemoryEntry]) -> str:
+    """Compact restatement of critical facts placed at the end of the system prompt
+    to exploit recency attention — models weight both the start and end of context."""
+    lines = ["[REMINDER — critical facts above still apply]"]
+    for m in memories:
+        lines.append(f"  !! {m.title}: {m.content}")
     return "\n".join(lines)
 
 

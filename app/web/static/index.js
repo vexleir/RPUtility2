@@ -148,18 +148,19 @@ async function runImportTemplate() {
   }
 }
 
-async function deleteCampaign(id) {
+function deleteCampaign(id) {
   const card = document.getElementById(`campaign-${id}`);
   const name = card?.dataset.campaignName || "this campaign";
-  if (!confirm(`Delete campaign "${name}"?\nThis cannot be undone.`)) return;
-  try {
-    const res = await fetch(`/api/campaigns/${id}`, { method: "DELETE" });
-    if (!res.ok) throw new Error(`Server returned ${res.status}`);
-    card?.remove();
-    if (!document.querySelector(`[id^='campaign-']`)) loadCampaigns();
-  } catch (err) {
-    showBanner("error", "Could not delete campaign: " + err.message);
-  }
+  showConfirm(`Delete campaign "${name}"? This cannot be undone.`, async () => {
+    try {
+      const res = await fetch(`/api/campaigns/${id}`, { method: "DELETE" });
+      if (!res.ok) throw new Error(`Server returned ${res.status}`);
+      card?.remove();
+      if (!document.querySelector(`[id^='campaign-']`)) loadCampaigns();
+    } catch (err) {
+      showBanner("error", "Could not delete campaign: " + err.message);
+    }
+  });
 }
 
 // ── Sessions ──────────────────────────────────────────────────────────────────
@@ -213,20 +214,21 @@ function sessionCard(s) {
     </div>`;
 }
 
-async function deleteSession(id) {
+function deleteSession(id) {
   const card = document.getElementById(`session-${id}`);
   const name = card?.dataset.sessionName || "this session";
-  if (!confirm(`Delete session "${name}"?\nThis cannot be undone.`)) return;
-  try {
-    const res = await fetch(`/api/sessions/${id}`, { method: "DELETE" });
-    if (!res.ok) throw new Error(`Server returned ${res.status}`);
-    const card = document.getElementById(`session-${id}`);
-    if (card) card.remove();
-    // If list is now empty, reload to show empty state
-    if (!document.querySelector(".session-card")) loadSessions();
-  } catch (err) {
-    showBanner("error", "Could not delete session: " + err.message);
-  }
+  showConfirm(`Delete session "${name}"? This cannot be undone.`, async () => {
+    try {
+      const res = await fetch(`/api/sessions/${id}`, { method: "DELETE" });
+      if (!res.ok) throw new Error(`Server returned ${res.status}`);
+      const el = document.getElementById(`session-${id}`);
+      if (el) el.remove();
+      // If list is now empty, reload to show empty state
+      if (!document.querySelector(".session-card")) loadSessions();
+    } catch (err) {
+      showBanner("error", "Could not delete session: " + err.message);
+    }
+  });
 }
 
 // ── Cards ─────────────────────────────────────────────────────────────────────
