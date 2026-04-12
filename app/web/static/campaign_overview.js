@@ -275,7 +275,6 @@ function renderScenesList() {
       : '<span class="scene-badge active">In Progress</span>';
     const turnCount = s.turns?.length || 0;
     const sid = escHtml(s.id);
-    const summaryEsc = (s.confirmed_summary || "").replace(/\\/g, "\\\\").replace(/`/g, "\\`");
     div.innerHTML = `
       <div class="scene-card-header">
         <div>
@@ -285,7 +284,7 @@ function renderScenesList() {
         </div>
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
           ${turnCount > 0 ? `<button class="btn btn-sm btn-ghost" onclick="viewSceneTranscript(${JSON.stringify(s).replace(/"/g, '&quot;')})">📜 Read</button>` : ""}
-          ${s.confirmed ? `<button class="btn btn-sm btn-ghost" onclick="editSceneSummary('${sid}', \`${summaryEsc}\`, ${s.scene_number})">✏ Summary</button>` : ""}
+          ${s.confirmed ? `<button class="btn btn-sm btn-ghost" onclick="editSceneSummary('${sid}', ${s.scene_number})">✏ Summary</button>` : ""}
           ${s.confirmed ? `<button class="btn btn-sm btn-ghost" onclick="reopenScene('${sid}')">↩ Reopen</button>` : ""}
           ${!s.confirmed ? `<a href="/campaigns/${CAMPAIGN_ID}/play" class="btn btn-sm">▶ Continue</a>` : ""}
         </div>
@@ -313,10 +312,11 @@ function reopenScene(sceneId) {
 
 let _editSummarySceneId = null;
 
-function editSceneSummary(sceneId, currentSummary, sceneNum) {
+function editSceneSummary(sceneId, sceneNum) {
   _editSummarySceneId = sceneId;
+  const scene = _scenes.find(s => s.id === sceneId);
   document.getElementById("es-title").textContent = `Edit Summary — Scene ${sceneNum}`;
-  document.getElementById("es-textarea").value = currentSummary;
+  document.getElementById("es-textarea").value = scene?.confirmed_summary || "";
   document.getElementById("es-status").textContent = "";
 
   // Populate model select
