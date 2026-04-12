@@ -33,6 +33,19 @@ class ActionLogStore:
             ).fetchall()
         return [_row_to_action_log(r) for r in rows]
 
+    def get_recent_for_scene(self, campaign_id: str, scene_id: str, n: int = 20) -> list[ActionLogEntry]:
+        with get_connection(self._db) as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM action_logs
+                WHERE campaign_id=? AND scene_id=?
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (campaign_id, scene_id, n),
+            ).fetchall()
+        return [_row_to_action_log(r) for r in rows]
+
 
 def _row_to_action_log(row) -> ActionLogEntry:
     return ActionLogEntry(

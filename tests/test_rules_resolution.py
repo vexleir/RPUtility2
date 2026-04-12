@@ -7,9 +7,23 @@ from pathlib import Path
 from app.core.config import config
 from app.core.models import CharacterSheet
 from app.rules.dice import parse_dice_expression
-from app.rules.resolution import resolve_d20_check
+from app.rules.resolution import (
+    resolve_contested_d20_check,
+    resolve_d20_attack,
+    resolve_d20_check,
+    resolve_damage_roll,
+    resolve_healing_roll,
+)
 from app.rules.store import RulebookStore
 from app.core.models import Rulebook, RuleSection
+
+
+class FixedRng:
+    def __init__(self, values: list[int]):
+        self._values = list(values)
+
+    def randint(self, _low: int, _high: int) -> int:
+        return self._values.pop(0)
 
 
 def test_parse_dice_expression_supports_modifier():
@@ -67,6 +81,101 @@ def test_resolve_d20_check_failure_with_disadvantage():
     assert result.advantage_state == "disadvantage"
     assert len(result.dice_rolls) == 2
     assert result.success is False
+
+
+def test_resolve_d20_attack_critical_hit_beats_target_ac():
+    attacker = CharacterSheet(
+        campaign_id="c",
+        abilities={"strength": 16, "dexterity": 10, "constitution": 10, "intelligence": 10, "wisdom": 10, "charisma": 10},
+    )
+    result = resolve_d20_attack(
+        attacker=attacker,
+        source="strength",
+        target_armor_class=30,
+        rng=FixedRng([20]),
+        reason="Heavy swing",
+    )
+    assert result.attack_roll == 20
+    assert result.critical_hit is True
+    assert result.hit is True
+    assert result.outcome == "critical_hit"
+
+
+def test_resolve_d20_attack_nat1_is_miss_even_with_high_modifier():
+    attacker = CharacterSheet(
+        campaign_id="c",
+        abilities={"strength": 30, "dexterity": 10, "constitution": 10, "intelligence": 10, "wisdom": 10, "charisma": 10},
+    )
+    result = resolve_d20_attack(
+        attacker=attacker,
+        source="strength",
+        target_armor_class=5,
+        rng=FixedRng([1]),
+    )
+    assert result.attack_roll == 1
+    assert result.hit is False
+    assert result.outcome == "miss"
+
+
+def test_resolve_damage_roll_doubles_dice_on_critical_hit():
+    result = resolve_damage_roll(
+        roll_expression="1d8+2",
+        critical_hit=True,
+        damage_type="slashing",
+        rng=FixedRng([4, 7]),
+    )
+    assert result.roll_expression == "2d8+2"
+    assert result.dice_rolls == [4, 7]
+    assert result.total == 13
+    assert result.damage_type == "slashing"
+
+
+def test_resolve_healing_roll_never_goes_below_zero():
+    result = resolve_healing_roll(
+        roll_expression="1d4",
+        modifier=-10,
+        rng=FixedRng([1]),
+        source="potion",
+    )
+    assert result.total == 0
+    assert result.source == "potion"
+
+
+def test_resolve_contested_d20_check_player_wins():
+    actor = CharacterSheet(campaign_id="c", skill_modifiers={"stealth": 5})
+    opponent = CharacterSheet(campaign_id="c", skill_modifiers={"perception": 2})
+    result = resolve_contested_d20_check(
+        actor_sheet=actor,
+        actor_name="Player",
+        actor_source="stealth",
+        opponent_sheet=opponent,
+        opponent_name="Guard",
+        opponent_source="perception",
+        rng=FixedRng([14, 9]),
+        reason="Slip past the sentry",
+    )
+    assert result.winner == "actor"
+    assert result.margin == 8
+    assert result.actor.total == 19
+    assert result.opponent.total == 11
+
+
+def test_resolve_contested_d20_check_supports_opponent_modifier_override_and_tie():
+    actor = CharacterSheet(campaign_id="c", abilities={"strength": 12})
+    result = resolve_contested_d20_check(
+        actor_sheet=actor,
+        actor_name="Player",
+        actor_source="strength",
+        opponent_sheet=None,
+        opponent_name="Ogre",
+        opponent_source="athletics",
+        opponent_modifier=3,
+        rng=FixedRng([12, 10]),
+    )
+    assert result.winner == "tie"
+    assert result.margin == 0
+    assert result.actor.total == 13
+    assert result.opponent.total == 13
 
 
 def test_rulebook_store_save_and_get():

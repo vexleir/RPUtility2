@@ -1,0 +1,23 @@
+{
+  "id": "a989dff7-f000-4e47-a699-6532ac0c63c1",
+  "slug": "second-wind",
+  "name": "Second Wind",
+  "category": "action",
+  "system_pack": "d20-fantasy-core",
+  "description": "Recover some HP.",
+  "rules_text": "Regain a small amount of HP.",
+  "tags": [],
+  "action_cost": "bonus_action",
+  "range_feet": null,
+  "roll_expression": "",
+  "modifier": 0,
+  "equipment_slot": "",
+  "armor_class_bonus": 0,
+  "charges_max": 0,
+  "restores_on": "",
+  "resource_costs": {},
+  "applies_conditions": [],
+  "is_builtin": false,
+  "created_at": "2026-04-11T00:45:11.021022+00:00",
+  "updated_at": "2026-04-11T00:45:11.021024+00:00"
+}

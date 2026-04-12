@@ -1494,6 +1494,84 @@ textarea.wu-npc-field-input { resize: vertical; }
 /* sidebar facts in scene play */
 .sidebar-fact { font-size: 12px; color: var(--text-muted); padding: 4px 0; line-height: 1.5; }
 
+.gm-procedure-card {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.gm-procedure-kicker {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--accent-light);
+}
+.gm-procedure-headline {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+.gm-procedure-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.gm-procedure-note {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+.gm-procedure-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.gm-action-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.gm-action-chip:hover {
+  border-color: var(--accent);
+  color: var(--accent-light);
+}
+.gm-decision-item {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+.gm-decision-item:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+.gm-decision-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: center;
+}
+.gm-decision-time {
+  font-size: 11px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+.gm-empty {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
 /* ── Banner system ─────────────────────────────────────────────── */
 .banner { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; border-radius: var(--radius); font-size: 13px; margin-bottom: 8px; }
 .banner-info    { background: #1e1e3f; border: 1px solid var(--accent-dim); color: var(--accent-light); }

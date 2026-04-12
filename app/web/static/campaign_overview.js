@@ -1382,6 +1382,102 @@ async function savePc() {
   } catch (e) { showBanner(`Save failed: ${e.message}`, "error"); }
 }
 
+async function levelUpPc() {
+  if (!_sheet) {
+    showBanner("Create the rules sheet first.", "warning");
+    return;
+  }
+  const nextLevelDefault = (_sheet.level || 1) + 1;
+  const targetLevelRaw = window.prompt("Advance to what level?", String(nextLevelDefault));
+  if (targetLevelRaw === null) return;
+  const targetLevel = parseInt(targetLevelRaw, 10);
+  if (!Number.isFinite(targetLevel) || targetLevel <= (_sheet.level || 1)) {
+    showBanner("Enter a level higher than the current level.", "warning");
+    return;
+  }
+  const hpGainRaw = window.prompt("HP gained this level?", "0");
+  if (hpGainRaw === null) return;
+  const hitPointGain = parseInt(hpGainRaw, 10);
+  if (!Number.isFinite(hitPointGain) || hitPointGain < 0) {
+    showBanner("HP gain must be zero or greater.", "warning");
+    return;
+  }
+
+  let abilityIncreases = {};
+  let resourcePoolIncreases = {};
+  try {
+    abilityIncreases = JSON.parse(window.prompt('Ability increases JSON (optional)', '{}') || "{}");
+    resourcePoolIncreases = JSON.parse(window.prompt('Resource pool increases JSON (optional)', '{}') || "{}");
+  } catch {
+    showBanner("Level-up JSON inputs must be valid JSON objects.", "warning");
+    return;
+  }
+  const featureNote = (window.prompt("Feature note (optional)", "") || "").trim();
+
+  try {
+    const res = await fetch(`/api/campaigns/${CAMPAIGN_ID}/character-sheets/player/player/level-up`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        target_level: targetLevel,
+        hit_point_gain: hitPointGain,
+        ability_increases: abilityIncreases,
+        resource_pool_increases: resourcePoolIncreases,
+        feature_note: featureNote,
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+    _sheet = data.sheet;
+    openEditPc();
+    renderAll();
+    showBanner(data.summary || `Leveled to ${targetLevel}.`, "success");
+  } catch (e) {
+    showBanner(`Level up failed: ${e.message}`, "error");
+  }
+}
+
+async function quickBuildPc() {
+  try {
+    const optionsRes = await fetch(`/api/campaigns/${CAMPAIGN_ID}/character-sheets/quick-build/options`);
+    const options = await optionsRes.json().catch(() => ({}));
+    if (!optionsRes.ok) throw new Error(options.detail || `HTTP ${optionsRes.status}`);
+
+    const name = (window.prompt("Character name", _pc?.name || _sheet?.name || "Adventurer") || "").trim();
+    if (!name) return;
+    const classHint = (options.classes || []).join(" / ");
+    const ancestryHint = (options.ancestries || []).join(" / ");
+    const backgroundHint = (options.backgrounds || []).join(" / ");
+    const characterClass = (window.prompt(`Class? ${classHint}`, _sheet?.character_class?.toLowerCase() || "fighter") || "").trim().toLowerCase();
+    if (!characterClass) return;
+    const ancestry = (window.prompt(`Ancestry? ${ancestryHint}`, _sheet?.ancestry?.toLowerCase() || "human") || "").trim().toLowerCase();
+    if (!ancestry) return;
+    const background = (window.prompt(`Background? ${backgroundHint}`, _sheet?.background?.toLowerCase() || "wanderer") || "").trim().toLowerCase();
+    if (background === null) return;
+
+    const res = await fetch(`/api/campaigns/${CAMPAIGN_ID}/character-sheets/player/player/quick-build`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name,
+        character_class: characterClass,
+        ancestry,
+        background,
+        level: 1,
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+    _sheet = data.sheet;
+    if (data.player_character) _pc = data.player_character;
+    openEditPc();
+    renderAll();
+    showBanner(data.summary || "Quick build complete.", "success");
+  } catch (e) {
+    showBanner(`Quick build failed: ${e.message}`, "error");
+  }
+}
+
 // ── Search ────────────────────────────────────────────────────────────────────
 
 let _searchTimer = null;

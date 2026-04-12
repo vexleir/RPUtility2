@@ -20,6 +20,14 @@ from app.core.models import (
     CampaignScene, SceneTurn,
     ChronicleEntry,
     CampaignFaction,
+    CampaignObjective,
+    CampaignQuest,
+    CampaignEvent,
+    CampaignEventStatus,
+    ObjectiveStatus,
+    QuestStatus,
+    QuestStage,
+    ImportanceLevel,
 )
 
 
@@ -46,12 +54,13 @@ class CampaignStore:
                      created_at=now, updated_at=now)
         with get_connection(self._db) as conn:
             conn.execute(
-                "INSERT INTO campaigns (id,name,model_name,play_mode,system_pack,feature_flags,style_guide,gen_settings,notes,created_at,updated_at) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO campaigns (id,name,model_name,play_mode,system_pack,feature_flags,style_guide,gen_settings,world_time_hours,notes,created_at,updated_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                 (c.id, c.name, c.model_name, c.play_mode.value, c.system_pack,
                  json_encode(c.feature_flags),
                  json_encode(sg.model_dump()),
                  json_encode(c.gen_settings.model_dump()),
+                 c.world_time_hours,
                  c.notes,
                  c.created_at.isoformat(), c.updated_at.isoformat()),
             )
@@ -81,11 +90,12 @@ class CampaignStore:
         c.updated_at = _now()
         with get_connection(self._db) as conn:
             conn.execute(
-                "UPDATE campaigns SET name=?,model_name=?,summary_model_name=?,play_mode=?,system_pack=?,feature_flags=?,style_guide=?,gen_settings=?,notes=?,cover_image=?,updated_at=? WHERE id=?",
+                "UPDATE campaigns SET name=?,model_name=?,summary_model_name=?,play_mode=?,system_pack=?,feature_flags=?,style_guide=?,gen_settings=?,world_time_hours=?,notes=?,cover_image=?,updated_at=? WHERE id=?",
                 (c.name, c.model_name, c.summary_model_name, c.play_mode.value,
                  c.system_pack, json_encode(c.feature_flags),
                  json_encode(c.style_guide.model_dump()),
                  json_encode(c.gen_settings.model_dump()),
+                 c.world_time_hours,
                  c.notes, c.cover_image,
                  c.updated_at.isoformat(), c.id),
             )
@@ -111,6 +121,7 @@ def _row_to_campaign(row) -> Campaign:
         feature_flags=json_decode(row["feature_flags"]) if "feature_flags" in keys and row["feature_flags"] else {},
         style_guide=StyleGuide(**sg_raw) if sg_raw else StyleGuide(),
         gen_settings=GenSettings(**{k: v for k, v in gs_raw.items() if k in GenSettings.model_fields}) if gs_raw else GenSettings(),
+        world_time_hours=int(row["world_time_hours"]) if "world_time_hours" in keys and row["world_time_hours"] is not None else 0,
         notes=row["notes"] if "notes" in keys else "",
         cover_image=row["cover_image"] if "cover_image" in keys else None,
         created_at=datetime.fromisoformat(row["created_at"]),
@@ -713,6 +724,245 @@ def _row_to_faction(row) -> CampaignFaction:
         description=row["description"], goals=row["goals"], methods=row["methods"],
         standing_with_player=row["standing_with_player"] if "standing_with_player" in keys else "",
         relationship_notes=row["relationship_notes"] if "relationship_notes" in keys else "",
+        created_at=datetime.fromisoformat(row["created_at"]),
+        updated_at=datetime.fromisoformat(row["updated_at"]),
+    )
+
+
+# ── Objectives ────────────────────────────────────────────────────────────────
+
+class CampaignObjectiveStore:
+    def __init__(self, db_path: str) -> None:
+        self._db = db_path
+
+    def save(self, objective: CampaignObjective) -> None:
+        with get_connection(self._db) as conn:
+            conn.execute("""
+                INSERT INTO campaign_objectives
+                    (id,campaign_id,title,description,status,created_at,updated_at)
+                VALUES (?,?,?,?,?,?,?)
+                ON CONFLICT(id) DO UPDATE SET
+                    title=excluded.title,
+                    description=excluded.description,
+                    status=excluded.status,
+                    updated_at=excluded.updated_at
+            """, (
+                objective.id,
+                objective.campaign_id,
+                objective.title,
+                objective.description,
+                objective.status.value,
+                objective.created_at.isoformat(),
+                objective.updated_at.isoformat(),
+            ))
+
+    def get_all(self, campaign_id: str) -> list[CampaignObjective]:
+        with get_connection(self._db) as conn:
+            rows = conn.execute(
+                "SELECT * FROM campaign_objectives WHERE campaign_id=? ORDER BY created_at ASC",
+                (campaign_id,),
+            ).fetchall()
+        return [_row_to_campaign_objective(row) for row in rows]
+
+    def get_active(self, campaign_id: str) -> list[CampaignObjective]:
+        with get_connection(self._db) as conn:
+            rows = conn.execute(
+                "SELECT * FROM campaign_objectives WHERE campaign_id=? AND status='active' ORDER BY created_at ASC",
+                (campaign_id,),
+            ).fetchall()
+        return [_row_to_campaign_objective(row) for row in rows]
+
+    def get(self, objective_id: str) -> CampaignObjective | None:
+        with get_connection(self._db) as conn:
+            row = conn.execute(
+                "SELECT * FROM campaign_objectives WHERE id=?",
+                (objective_id,),
+            ).fetchone()
+        return _row_to_campaign_objective(row) if row else None
+
+    def delete(self, objective_id: str) -> None:
+        with get_connection(self._db) as conn:
+            conn.execute("DELETE FROM campaign_objectives WHERE id=?", (objective_id,))
+
+    def delete_campaign(self, campaign_id: str) -> None:
+        with get_connection(self._db) as conn:
+            conn.execute("DELETE FROM campaign_objectives WHERE campaign_id=?", (campaign_id,))
+
+
+def _row_to_campaign_objective(row) -> CampaignObjective:
+    return CampaignObjective(
+        id=row["id"],
+        campaign_id=row["campaign_id"],
+        title=row["title"],
+        description=row["description"],
+        status=ObjectiveStatus(row["status"]),
+        created_at=datetime.fromisoformat(row["created_at"]),
+        updated_at=datetime.fromisoformat(row["updated_at"]),
+    )
+
+
+# ── Quests ────────────────────────────────────────────────────────────────────
+
+class CampaignQuestStore:
+    def __init__(self, db_path: str) -> None:
+        self._db = db_path
+
+    def save(self, quest: CampaignQuest) -> None:
+        with get_connection(self._db) as conn:
+            conn.execute("""
+                INSERT INTO campaign_quests
+                    (id,campaign_id,title,description,status,giver_npc_name,location_name,
+                     reward_notes,importance,stages,tags,created_at,updated_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+                ON CONFLICT(id) DO UPDATE SET
+                    title=excluded.title,
+                    description=excluded.description,
+                    status=excluded.status,
+                    giver_npc_name=excluded.giver_npc_name,
+                    location_name=excluded.location_name,
+                    reward_notes=excluded.reward_notes,
+                    importance=excluded.importance,
+                    stages=excluded.stages,
+                    tags=excluded.tags,
+                    updated_at=excluded.updated_at
+            """, (
+                quest.id,
+                quest.campaign_id,
+                quest.title,
+                quest.description,
+                quest.status.value,
+                quest.giver_npc_name,
+                quest.location_name,
+                quest.reward_notes,
+                quest.importance.value,
+                json_encode([stage.model_dump() for stage in quest.stages]),
+                json_encode(quest.tags),
+                quest.created_at.isoformat(),
+                quest.updated_at.isoformat(),
+            ))
+
+    def get_all(self, campaign_id: str) -> list[CampaignQuest]:
+        with get_connection(self._db) as conn:
+            rows = conn.execute(
+                "SELECT * FROM campaign_quests WHERE campaign_id=? ORDER BY created_at ASC",
+                (campaign_id,),
+            ).fetchall()
+        return [_row_to_campaign_quest(row) for row in rows]
+
+    def get_active(self, campaign_id: str) -> list[CampaignQuest]:
+        with get_connection(self._db) as conn:
+            rows = conn.execute(
+                "SELECT * FROM campaign_quests WHERE campaign_id=? AND status='active' ORDER BY created_at ASC",
+                (campaign_id,),
+            ).fetchall()
+        return [_row_to_campaign_quest(row) for row in rows]
+
+    def get(self, quest_id: str) -> CampaignQuest | None:
+        with get_connection(self._db) as conn:
+            row = conn.execute(
+                "SELECT * FROM campaign_quests WHERE id=?",
+                (quest_id,),
+            ).fetchone()
+        return _row_to_campaign_quest(row) if row else None
+
+    def delete(self, quest_id: str) -> None:
+        with get_connection(self._db) as conn:
+            conn.execute("DELETE FROM campaign_quests WHERE id=?", (quest_id,))
+
+    def delete_campaign(self, campaign_id: str) -> None:
+        with get_connection(self._db) as conn:
+            conn.execute("DELETE FROM campaign_quests WHERE campaign_id=?", (campaign_id,))
+
+
+def _row_to_campaign_quest(row) -> CampaignQuest:
+    raw_stages = json_decode(row["stages"]) if row["stages"] else []
+    raw_tags = json_decode(row["tags"]) if row["tags"] else []
+    stages = [QuestStage(**stage) if isinstance(stage, dict) else stage for stage in raw_stages]
+    return CampaignQuest(
+        id=row["id"],
+        campaign_id=row["campaign_id"],
+        title=row["title"],
+        description=row["description"],
+        status=QuestStatus(row["status"]),
+        giver_npc_name=row["giver_npc_name"],
+        location_name=row["location_name"],
+        reward_notes=row["reward_notes"],
+        importance=ImportanceLevel(row["importance"]),
+        stages=stages,
+        tags=raw_tags,
+        created_at=datetime.fromisoformat(row["created_at"]),
+        updated_at=datetime.fromisoformat(row["updated_at"]),
+    )
+
+
+# ── Campaign Events ───────────────────────────────────────────────────────────
+
+class CampaignEventStore:
+    def __init__(self, db_path: str) -> None:
+        self._db = db_path
+
+    def save(self, event: CampaignEvent) -> None:
+        with get_connection(self._db) as conn:
+            conn.execute("""
+                INSERT INTO campaign_events
+                    (id,campaign_id,event_type,title,content,details,world_time_hours,status,created_at,updated_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?)
+                ON CONFLICT(id) DO UPDATE SET
+                    event_type=excluded.event_type,
+                    title=excluded.title,
+                    content=excluded.content,
+                    details=excluded.details,
+                    world_time_hours=excluded.world_time_hours,
+                    status=excluded.status,
+                    updated_at=excluded.updated_at
+            """, (
+                event.id,
+                event.campaign_id,
+                event.event_type,
+                event.title,
+                event.content,
+                json_encode(event.details),
+                event.world_time_hours,
+                event.status.value,
+                event.created_at.isoformat(),
+                event.updated_at.isoformat(),
+            ))
+
+    def get_all(self, campaign_id: str) -> list[CampaignEvent]:
+        with get_connection(self._db) as conn:
+            rows = conn.execute(
+                "SELECT * FROM campaign_events WHERE campaign_id=? ORDER BY world_time_hours DESC, created_at DESC",
+                (campaign_id,),
+            ).fetchall()
+        return [_row_to_campaign_event(row) for row in rows]
+
+    def get(self, event_id: str) -> CampaignEvent | None:
+        with get_connection(self._db) as conn:
+            row = conn.execute(
+                "SELECT * FROM campaign_events WHERE id=?",
+                (event_id,),
+            ).fetchone()
+        return _row_to_campaign_event(row) if row else None
+
+    def delete(self, event_id: str) -> None:
+        with get_connection(self._db) as conn:
+            conn.execute("DELETE FROM campaign_events WHERE id=?", (event_id,))
+
+    def delete_campaign(self, campaign_id: str) -> None:
+        with get_connection(self._db) as conn:
+            conn.execute("DELETE FROM campaign_events WHERE campaign_id=?", (campaign_id,))
+
+
+def _row_to_campaign_event(row) -> CampaignEvent:
+    return CampaignEvent(
+        id=row["id"],
+        campaign_id=row["campaign_id"],
+        event_type=row["event_type"],
+        title=row["title"],
+        content=row["content"],
+        details=json_decode(row["details"]) if "details" in row.keys() and row["details"] else {},
+        world_time_hours=int(row["world_time_hours"] or 0),
+        status=CampaignEventStatus(row["status"]),
         created_at=datetime.fromisoformat(row["created_at"]),
         updated_at=datetime.fromisoformat(row["updated_at"]),
     )

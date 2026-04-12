@@ -1,0 +1,37 @@
+from .engine import (
+    add_encounter_log_entry,
+    apply_damage_to_participant,
+    apply_condition_to_participant,
+    apply_healing_to_participant,
+    consume_participant_action,
+    advance_encounter_turn,
+    build_encounter,
+    build_encounter_participant,
+    complete_encounter,
+    generate_encounter_summary,
+    grant_participant_movement,
+    resolve_participant_concentration_check,
+    set_participant_concentration,
+    spend_participant_movement,
+    stabilize_participant,
+)
+from .store import EncounterStore
+
+__all__ = [
+    "EncounterStore",
+    "add_encounter_log_entry",
+    "apply_damage_to_participant",
+    "apply_condition_to_participant",
+    "apply_healing_to_participant",
+    "consume_participant_action",
+    "advance_encounter_turn",
+    "build_encounter",
+    "build_encounter_participant",
+    "complete_encounter",
+    "generate_encounter_summary",
+    "grant_participant_movement",
+    "resolve_participant_concentration_check",
+    "set_participant_concentration",
+    "spend_participant_movement",
+    "stabilize_participant",
+]

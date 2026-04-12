@@ -14,9 +14,21 @@ let _sheet = null;
 let _npcs = [];
 let _threads = [];
 let _facts = [];
+let _objectives = [];
+let _quests = [];
+let _events = [];
 let _actionLogs = [];
+let _ruleAudits = [];
+let _campaignRecap = { items: [], summary: "" };
 let _streaming = false;
 let _userName = "Player";
+let _gmProcedurePreview = null;
+let _gmPreviewTimer = null;
+let _recentGMDecisions = [];
+let _lastHandledGMDecisionId = null;
+let _activeEncounter = null;
+let _compendiumEntries = [];
+let _compendiumTimer = null;
 
 // ── Regenerate state ──────────────────────────────────────────────────────────
 let _alternatives = [];      // all generated responses for the current exchange
@@ -59,7 +71,12 @@ async function loadWorld() {
     _npcs = data.npcs || [];
     _threads = (data.threads || []).filter(t => t.status === "active");
     _facts = (data.world_facts || []).filter(f => f.content);
+    _objectives = data.objectives || [];
+    _quests = data.quests || [];
+    _events = data.events || [];
     _actionLogs = data.action_logs || [];
+    _ruleAudits = data.rule_audits || [];
+    _activeEncounter = data.active_encounter || null;
     _scene = data.scenes?.find(s => !s.confirmed) || null;
 
     document.getElementById("back-link").href = `/campaigns/${CAMPAIGN_ID}`;
@@ -103,11 +120,15 @@ async function loadWorld() {
       // Resume existing active scene
       showChatMode();
       renderExistingTurns();
+      await refreshCampaignRecap();
+      await refreshCompendiumSidebar();
       renderSidebar();
+      refreshSceneGMDecisions({ autoHandle: false });
     } else {
       // Show setup panel for new scene
       _scene = null;
       document.getElementById("scene-setup-panel").classList.remove("hidden");
+      await refreshCampaignRecap();
     }
 
     // Load player scratchpad
@@ -338,6 +359,7 @@ async function streamOpeningNarration() {
     finalizeStreamingMessage(aiDiv, buffer);
     if (!_scene.turns) _scene.turns = [];
     _scene.turns.push({ role: "assistant", content: buffer });
+    await refreshSceneGMDecisions();
 
   } catch (e) {
     aiDiv.innerHTML = `<span class="error-text">Error: ${escHtml(e.message)}</span>`;
@@ -391,6 +413,7 @@ function showChatMode() {
 
   updateUndoButton();
   document.getElementById("user-input").focus();
+  refreshCompendiumSidebar();
 }
 
 function updateUndoButton() {
@@ -425,6 +448,8 @@ async function sendMessage() {
   if (!text) return;
   input.value = "";
   input.style.height = "";
+  _gmProcedurePreview = null;
+  renderGMProcedureSidebar();
 
   // ── Dice roll command (/roll XdY or /roll XdY+Z) ─────────────────────────
   const diceMatch = text.match(/^\/roll\s+(\d*)d(\d+)([+-]\d+)?(.*)$/i);
@@ -491,6 +516,7 @@ async function sendMessage() {
     // Attach edit buttons now that indices are known
     _addEditButton(userDiv, "user", _scene.turns.length - 2);
     _trackAiResponse(aiDiv, buffer, _scene.turns.length - 1);
+    await refreshSceneGMDecisions();
 
   } catch (e) {
     aiDiv.innerHTML = `<span class="error-text">Error: ${escHtml(e.message)}</span>`;
@@ -508,6 +534,8 @@ async function continueStory() {
 
   // Inject a silent system nudge — no user bubble shown in the chat
   const continueMsg = "(Continue the story.)";
+  _gmProcedurePreview = null;
+  renderGMProcedureSidebar();
 
   // Reset regenerate state — new exchange begins
   _clearRegenState();
@@ -547,6 +575,7 @@ async function continueStory() {
     _scene.turns.push({ role: "assistant", content: buffer });
 
     _trackAiResponse(aiDiv, buffer, _scene.turns.length - 1);
+    await refreshSceneGMDecisions();
 
   } catch (e) {
     aiDiv.innerHTML = `<span class="error-text">Error: ${escHtml(e.message)}</span>`;
@@ -784,6 +813,7 @@ async function regenerate() {
     }
 
     _renderRegenControls();
+    await refreshSceneGMDecisions();
 
   } catch (e) {
     _lastAiDiv.classList.remove("streaming");
@@ -848,6 +878,53 @@ function appendStreamingMessage() {
   div.innerHTML = '<span class="typing-dot"></span>';
   area.appendChild(div);
   return div;
+}
+
+async function streamMechanicsFollowup(prompt) {
+  if (_streaming || !_scene || !prompt.trim()) return;
+
+  _clearRegenState();
+  _streaming = true;
+  setSendEnabled(false);
+
+  const aiDiv = appendStreamingMessage();
+  let buffer = "";
+
+  try {
+    const res = await fetch(`/api/campaigns/${CAMPAIGN_ID}/scenes/${_scene.id}/mechanics-followup`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt, ...gsGetParams() }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: "Unknown error" }));
+      throw new Error(err.detail || `HTTP ${res.status}`);
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      aiDiv.innerHTML = marked.parse(buffer);
+      scrollToBottom();
+    }
+
+    finalizeStreamingMessage(aiDiv, buffer);
+    if (!_scene.turns) _scene.turns = [];
+    _scene.turns.push({ role: "assistant", content: buffer });
+    _trackAiResponse(aiDiv, buffer, _scene.turns.length - 1);
+    await refreshSceneGMDecisions();
+  } catch (e) {
+    aiDiv.innerHTML = `<span class="error-text">Error: ${escHtml(e.message)}</span>`;
+    showError(e.message);
+  } finally {
+    _streaming = false;
+    setSendEnabled(true);
+    updateUndoButton();
+    scrollToBottom();
+  }
 }
 
 function finalizeStreamingMessage(div, content) {
@@ -1334,6 +1411,12 @@ function renderSidebar() {
   }
 
   renderRulesSidebar();
+  renderAdventureSidebar();
+  renderRecapSidebar();
+  renderCompendiumSidebar();
+  renderGMProcedureSidebar();
+  renderEncounterSidebar();
+  renderRuleAuditSidebar();
   renderActionLogSidebar();
 
   // World facts (first 5)
@@ -1351,14 +1434,134 @@ function renderSidebar() {
   buildContextModal();
 }
 
+function isD20RulesMode() {
+  return _campaign?.play_mode === "rules" && _campaign?.system_pack === "d20-fantasy-core";
+}
+
+function renderAdventureSidebar() {
+  const section = document.getElementById("adventure-section");
+  const container = document.getElementById("sidebar-adventure");
+  const addObjectiveButton = document.getElementById("add-objective-btn");
+  const addQuestButton = document.getElementById("add-quest-btn");
+  const addEventButton = document.getElementById("add-event-btn");
+  const downtimeButton = document.getElementById("run-downtime-btn");
+  const advanceQuestButton = document.getElementById("advance-quest-btn");
+  const generateTreasureButton = document.getElementById("generate-treasure-btn");
+  if (!section || !container || !addObjectiveButton || !addQuestButton || !addEventButton || !downtimeButton || !advanceQuestButton || !generateTreasureButton) return;
+
+  const isRulesMode = isD20RulesMode();
+  section.style.display = isRulesMode ? "" : "none";
+  if (!isRulesMode) return;
+
+  const activeObjectives = (_objectives || []).filter(objective => objective.status === "active");
+  const activeQuests = (_quests || []).filter(quest => quest.status === "active");
+  const recentEvents = (_events || []).slice(0, 3);
+  advanceQuestButton.disabled = !activeQuests.length;
+  generateTreasureButton.disabled = !_sheet?.name;
+
+  const objectiveHtml = activeObjectives.length
+    ? activeObjectives.slice(0, 4).map(objective => `
+      <div class="sidebar-item">
+        <div class="sidebar-item-name">${escHtml(objective.title)}</div>
+        ${objective.description ? `<div class="sidebar-item-sub muted">${escHtml(objective.description)}</div>` : ""}
+      </div>
+    `).join("")
+    : '<div class="gm-empty">No active objectives.</div>';
+
+  const questHtml = activeQuests.length
+    ? activeQuests.slice(0, 4).map(quest => {
+      const nextStage = (quest.stages || []).find(stage => !stage.completed);
+      return `
+        <div class="sidebar-item">
+          <div class="sidebar-item-name">${escHtml(quest.title)}</div>
+          <div class="sidebar-item-sub muted">${escHtml(quest.progress_label || quest.status)}</div>
+          ${quest.description ? `<div class="sidebar-item-sub">${escHtml(quest.description)}</div>` : ""}
+          ${nextStage ? `<div class="sidebar-item-sub muted">Next: ${escHtml(nextStage.description)}</div>` : ""}
+        </div>
+      `;
+    }).join("")
+    : '<div class="gm-empty">No active quests.</div>';
+
+  const eventHtml = recentEvents.length
+    ? recentEvents.map(event => {
+      const escalationLevel = Number(event.details?.escalation_level || 0);
+      const hookType = String(event.details?.hook_type || "").replaceAll("_", " ");
+      const consequenceKind = String(event.details?.last_consequence?.kind || "").replaceAll("_", " ");
+      const severity = escalationLevel > 0 ? `Severity ${escalationLevel}` : "";
+      const targetHint = event.details?.faction_id
+        ? `Target faction: ${escHtml(event.details.faction_id)}`
+        : event.details?.quest_id
+          ? `Target quest: ${escHtml(event.details.quest_id)}`
+          : "";
+      return `
+      <div class="sidebar-item">
+        <div class="sidebar-item-name">${escHtml(event.title)}</div>
+        <div class="sidebar-item-sub muted">${escHtml((event.event_type || "world").replaceAll("_", " "))} · ${escHtml(event.world_time?.label || "")}</div>
+        ${(hookType || severity) ? `<div class="sidebar-item-sub muted">${escHtml([hookType, severity].filter(Boolean).join(" · "))}</div>` : ""}
+        ${event.content ? `<div class="sidebar-item-sub">${escHtml(event.content)}</div>` : ""}
+        ${consequenceKind ? `<div class="sidebar-item-sub muted">Fallout: ${escHtml(consequenceKind)}</div>` : ""}
+        ${targetHint ? `<div class="sidebar-item-sub muted">${targetHint}</div>` : ""}
+        <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap">
+          <button class="btn btn-ghost btn-sm" onclick="editCampaignEvent('${escHtml(event.id)}')">Edit</button>
+          <button class="btn btn-ghost btn-sm" onclick="toggleCampaignEventStatus('${escHtml(event.id)}')">${event.status === "pending" ? "Resolve" : "Reopen"}</button>
+          ${event.status === "pending" && event.details?.hook_type === "encounter" ? `<button class="btn btn-ghost btn-sm" onclick="generateEncounterFromEvent('${escHtml(event.id)}')">Trigger Encounter</button>` : ""}
+        </div>
+      </div>
+    `;
+    }).join("")
+    : '<div class="gm-empty">No scheduled campaign events yet.</div>';
+
+  container.innerHTML = `
+    <div class="sidebar-item">
+      <div class="sidebar-item-sub muted">Objectives</div>
+    </div>
+    ${objectiveHtml}
+    <div class="sidebar-item" style="margin-top:8px">
+      <div class="sidebar-item-sub muted">Quests</div>
+    </div>
+    ${questHtml}
+    <div class="sidebar-item" style="margin-top:8px">
+      <div class="sidebar-item-sub muted">Recent Events</div>
+    </div>
+    ${eventHtml}
+  `;
+}
+
+function renderRecapSidebar() {
+  const section = document.getElementById("recap-section");
+  const container = document.getElementById("sidebar-recap");
+  if (!section || !container) return;
+
+  const isRulesMode = isD20RulesMode();
+  section.style.display = isRulesMode ? "" : "none";
+  if (!isRulesMode) return;
+
+  const items = Array.isArray(_campaignRecap?.items) ? _campaignRecap.items : [];
+  if (!items.length) {
+    container.innerHTML = '<div class="gm-empty">No merged recap entries yet.</div>';
+    return;
+  }
+
+  container.innerHTML = items.slice(0, 6).map(item => `
+    <div class="sidebar-item">
+      <div class="sidebar-item-name">${escHtml(item.title || item.kind || "Entry")}</div>
+      <div class="sidebar-item-sub muted">${escHtml(item.kind || "")}${item.world_time ? ` · ${escHtml(item.world_time)}` : ""}</div>
+      <div class="sidebar-item-sub">${escHtml(item.summary || "")}</div>
+    </div>
+  `).join("");
+}
+
 function renderRulesSidebar() {
   const section = document.getElementById("rules-sheet-section");
   const button = document.getElementById("resolve-check-btn");
   const stateButton = document.getElementById("sheet-state-btn");
+  const timeButton = document.getElementById("advance-time-btn");
+  const shortRestButton = document.getElementById("short-rest-btn");
+  const longRestButton = document.getElementById("long-rest-btn");
   const container = document.getElementById("sidebar-sheet");
-  if (!container || !section || !button || !stateButton) return;
+  if (!container || !section || !button || !stateButton || !timeButton || !shortRestButton || !longRestButton) return;
 
-  const isRulesMode = _campaign?.play_mode === "rules" && _campaign?.system_pack === "d20-fantasy-core";
+  const isRulesMode = isD20RulesMode();
   section.style.display = isRulesMode ? "" : "none";
   if (!isRulesMode) return;
 
@@ -1366,11 +1569,19 @@ function renderRulesSidebar() {
     container.innerHTML = '<div class="muted" style="font-size:0.8rem">No character sheet yet. Add one from the campaign overview to get deterministic checks.</div>';
     button.disabled = true;
     stateButton.disabled = true;
+    timeButton.disabled = true;
+    shortRestButton.disabled = true;
+    longRestButton.disabled = true;
     return;
   }
 
-  button.disabled = false;
-  stateButton.disabled = false;
+  const playerCanAct = !_activeEncounter || _activeEncounter.current_participant?.owner_type === "player";
+  const canRest = !_activeEncounter;
+  timeButton.disabled = false;
+  button.disabled = !playerCanAct;
+  stateButton.disabled = !playerCanAct;
+  shortRestButton.disabled = !canRest;
+  longRestButton.disabled = !canRest;
   const abilities = _sheet.abilities || {};
   const abilityLine = ["strength", "dexterity", "constitution", "intelligence", "wisdom", "charisma"]
     .map(key => `${key.slice(0, 3).toUpperCase()} ${abilities[key] ?? 10}`)
@@ -1382,11 +1593,32 @@ function renderRulesSidebar() {
     .slice(0, 6)
     .map(([key, value]) => `${key} ${value >= 0 ? "+" : ""}${value}`)
     .join(" · ");
+  const resourcePools = Object.entries(_sheet.resource_pools || {})
+    .slice(0, 4)
+    .map(([key, value]) => {
+      const current = value?.current ?? 0;
+      const maximum = value?.maximum ?? current;
+      return `${key} ${current}/${maximum}`;
+    })
+    .join(" · ");
+  const preparedSpells = (_sheet.prepared_spells || []).slice(0, 4).join(", ");
+  const equippedItems = Object.entries(_sheet.equipped_items || {})
+    .slice(0, 4)
+    .map(([slot, slug]) => `${slot}: ${slug}`)
+    .join(" · ");
+  const itemCharges = Object.entries(_sheet.item_charges || {})
+    .slice(0, 4)
+    .map(([slug, value]) => `${slug} ${value?.current ?? 0}/${value?.max ?? 0}`)
+    .join(" · ");
+  const worldTimeLabel = _campaign?.world_time?.label || "Day 1, 00:00";
 
   container.innerHTML = `
     <div class="sidebar-item">
       <div class="sidebar-item-name">${escHtml(_sheet.name)}</div>
       <div class="sidebar-item-sub muted">${escHtml(_sheet.character_class || "Adventurer")} · Level ${_sheet.level || 1}${_sheet.ancestry ? ` · ${escHtml(_sheet.ancestry)}` : ""}</div>
+    </div>
+    <div class="sidebar-item">
+      <div class="sidebar-item-sub muted">World Time: ${escHtml(worldTimeLabel)}</div>
     </div>
     <div class="sidebar-item">
       <div class="sidebar-item-sub">HP ${_sheet.current_hp}/${_sheet.max_hp}${_sheet.temp_hp ? ` (+${_sheet.temp_hp} temp)` : ""} · AC ${_sheet.armor_class} · Speed ${_sheet.speed}</div>
@@ -1395,8 +1627,361 @@ function renderRulesSidebar() {
       <div class="sidebar-item-sub">${escHtml(abilityLine)}</div>
     </div>
     ${topSkills ? `<div class="sidebar-item"><div class="sidebar-item-sub muted">Skills: ${escHtml(topSkills)}</div></div>` : ""}
+    ${resourcePools ? `<div class="sidebar-item"><div class="sidebar-item-sub muted">Resources: ${escHtml(resourcePools)}</div></div>` : ""}
+    ${preparedSpells ? `<div class="sidebar-item"><div class="sidebar-item-sub muted">Prepared: ${escHtml(preparedSpells)}</div></div>` : ""}
+    ${equippedItems ? `<div class="sidebar-item"><div class="sidebar-item-sub muted">Equipped: ${escHtml(equippedItems)}</div></div>` : ""}
+    ${itemCharges ? `<div class="sidebar-item"><div class="sidebar-item-sub muted">Item Charges: ${escHtml(itemCharges)}</div></div>` : ""}
     <div class="sidebar-item">
       <div class="sidebar-item-sub muted">Conditions: ${escHtml(conditions)}</div>
+    </div>
+    ${!playerCanAct && _activeEncounter?.current_participant ? `<div class="sidebar-item"><div class="sidebar-item-sub muted">Action gating: waiting for ${escHtml(_activeEncounter.current_participant.name)}'s turn.</div></div>` : ""}
+    ${!canRest && _activeEncounter ? `<div class="sidebar-item"><div class="sidebar-item-sub muted">Resting is disabled while an encounter is active.</div></div>` : ""}
+  `;
+}
+
+function renderCompendiumSidebar() {
+  const section = document.getElementById("compendium-section");
+  const container = document.getElementById("sidebar-compendium");
+  const searchInput = document.getElementById("compendium-search");
+  const categorySelect = document.getElementById("compendium-category");
+  if (!section || !container || !searchInput || !categorySelect) return;
+
+  const isRulesMode = isD20RulesMode();
+  section.style.display = isRulesMode ? "" : "none";
+  if (!isRulesMode) return;
+
+  const query = searchInput.value.trim().toLowerCase();
+  const category = categorySelect.value || "";
+  const filtered = (_compendiumEntries || []).filter(entry => {
+    if (category && entry.category !== category) return false;
+    if (!query) return true;
+    const haystack = [
+      entry.name,
+      entry.slug,
+      entry.description,
+      entry.rules_text,
+      ...(entry.tags || []),
+    ].join(" ").toLowerCase();
+    return haystack.includes(query);
+  }).slice(0, 10);
+
+  if (!_compendiumEntries.length) {
+    container.innerHTML = '<div class="gm-empty">No compendium entries loaded yet.</div>';
+    return;
+  }
+  if (!filtered.length) {
+    container.innerHTML = '<div class="gm-empty">No matching compendium entries.</div>';
+    return;
+  }
+
+  container.innerHTML = filtered.map((entry, index) => `
+    <div class="sidebar-item">
+      <div class="sidebar-item-name">${escHtml(entry.name)}</div>
+      <div class="sidebar-item-sub muted">${escHtml(entry.category)}${entry.action_cost ? ` · ${escHtml(entry.action_cost.replaceAll("_", " "))}` : ""}${entry.range_feet !== null && entry.range_feet !== undefined ? ` · ${entry.range_feet} ft` : ""}</div>
+      ${entry.description ? `<div class="sidebar-item-sub">${escHtml(entry.description)}</div>` : ""}
+      ${entry.category === "spell" && isSpellPrepared(entry.slug) ? `<div class="sidebar-item-sub muted">Prepared</div>` : ""}
+      ${entry.equipment_slot ? `<div class="sidebar-item-sub muted">${escHtml(entry.equipment_slot)}${entry.armor_class_bonus ? ` · AC ${entry.armor_class_bonus >= 0 ? "+" : ""}${entry.armor_class_bonus}` : ""}${entry.charges_max ? ` · ${entry.charges_max} charges` : ""}${isItemEquipped(entry.slug) ? " · Equipped" : ""}</div>` : ""}
+      <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap">
+        <button class="btn btn-ghost btn-sm" onclick="useCompendiumEntry('${escHtml(entry.slug)}')">Use</button>
+        <button class="btn btn-ghost btn-sm" onclick="previewCompendiumEntry('${escHtml(entry.slug)}')">Details</button>
+        ${entry.category === "spell" ? `<button class="btn btn-ghost btn-sm" onclick="togglePreparedSpell('${escHtml(entry.slug)}', ${isSpellPrepared(entry.slug) ? "false" : "true"})">${isSpellPrepared(entry.slug) ? "Unprepare" : "Prepare"}</button>` : ""}
+        ${entry.equipment_slot ? `<button class="btn btn-ghost btn-sm" onclick="toggleEquipmentEntry('${escHtml(entry.slug)}', ${isItemEquipped(entry.slug) ? "false" : "true"})">${isItemEquipped(entry.slug) ? "Unequip" : "Equip"}</button>` : ""}
+      </div>
+    </div>
+  `).join("");
+}
+
+function scheduleCompendiumRefresh() {
+  clearTimeout(_compendiumTimer);
+  _compendiumTimer = setTimeout(() => {
+    renderCompendiumSidebar();
+  }, 150);
+}
+
+async function refreshCompendiumSidebar() {
+  if (!isD20RulesMode()) return;
+  try {
+    const category = document.getElementById("compendium-category")?.value || "";
+    const query = document.getElementById("compendium-search")?.value?.trim() || "";
+    const params = new URLSearchParams();
+    params.set("system_pack", _campaign?.system_pack || "d20-fantasy-core");
+    if (category) params.set("category", category);
+    if (query) params.set("query", query);
+    const res = await fetch(`/api/campaigns/compendium?${params.toString()}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    _compendiumEntries = await res.json();
+  } catch (e) {
+    _compendiumEntries = [];
+    showError(`Could not load compendium: ${e.message}`);
+  }
+  renderCompendiumSidebar();
+}
+
+function useCompendiumEntry(slug) {
+  const entry = (_compendiumEntries || []).find(item => item.slug === slug);
+  if (!entry) {
+    showToast("Compendium entry not found.", "info");
+    return;
+  }
+  if (entry.category === "spell" && !isSpellPrepared(entry.slug)) {
+    showToast(`Prepare ${entry.name} on the rules sheet before using it.`, "info", 5000);
+    return;
+  }
+  if (_activeEncounter && ["dash", "dodge", "disengage", "bless", "help", "second-wind", "healing-word", "cure-wounds", "magic-missile", "healing-wand"].includes(entry.slug)) {
+    useEncounterCompendiumEntry(entry);
+    return;
+  }
+  if (entry.category === "armor" || (entry.category === "item" && entry.equipment_slot)) {
+    showToast(`Use the ${isItemEquipped(entry.slug) ? "Unequip" : "Equip"} button for ${entry.name}.`, "info", 5000);
+    return;
+  }
+  const baseReason = document.getElementById("user-input")?.value?.trim() || "";
+  if (entry.category === "action" || entry.category === "weapon") {
+    openResolveAttackModal({
+      source: entry.name,
+      range_feet: entry.range_feet,
+      action_cost: entry.action_cost || "action",
+      resource_costs: entry.resource_costs || {},
+      reason: baseReason,
+    });
+    return;
+  }
+  if (entry.category === "spell") {
+    const nameLower = String(entry.name || "").toLowerCase();
+    if (nameLower.includes("heal") || nameLower.includes("cure") || nameLower.includes("word")) {
+      openResolveHealingModal({
+        source: entry.name,
+        range_feet: entry.range_feet,
+        action_cost: entry.action_cost || "action",
+        resource_costs: entry.resource_costs || {},
+        reason: baseReason,
+      });
+      return;
+    }
+    openResolveAttackModal({
+      source: entry.name,
+      range_feet: entry.range_feet,
+      action_cost: entry.action_cost || "action",
+      resource_costs: entry.resource_costs || {},
+      reason: baseReason,
+    });
+    return;
+  }
+  if (entry.category === "condition") {
+    showToast(`Condition reference: ${entry.name}. Use the encounter Condition control to apply it.`, "info", 5000);
+    return;
+  }
+  showToast(`No direct resolver mapping for ${entry.category} yet.`, "info");
+}
+
+async function useEncounterCompendiumEntry(entry) {
+  if (!_activeEncounter?.id) {
+    showToast("No active encounter for direct compendium execution.", "info");
+    return;
+  }
+  const currentParticipant = _activeEncounter.current_participant;
+  const actorId = currentParticipant?.id || null;
+  const payload = {
+    slug: entry.slug,
+    actor_participant_id: actorId,
+    target_participant_ids: [],
+  };
+  payload.target_participant_ids = promptCompendiumTargets(entry, actorId);
+  try {
+    const res = await fetch(`/api/campaigns/${CAMPAIGN_ID}/encounters/${_activeEncounter.id}/use-compendium`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+    if (data.encounter) _activeEncounter = data.encounter;
+    if (data.actor?.owner_type === "player" || (data.targets || []).some(target => target.owner_type === "player")) {
+      await loadWorld();
+      return;
+    }
+    await refreshActionLogs();
+    renderSidebar();
+    showToast(data.summary || `${entry.name} used.`, "success");
+  } catch (e) {
+    showError(`Could not use compendium entry: ${e.message}`);
+  }
+}
+
+function promptCompendiumTargets(entry, actorId) {
+  const participants = _activeEncounter?.participants || [];
+  const actor = participants.find(participant => participant.id === actorId) || null;
+  if (entry.slug === "bless") {
+    return participants
+      .filter(participant => participant.team === actor?.team || participant.owner_type === "player")
+      .slice(0, 3)
+      .map(participant => participant.id);
+  }
+  if (["second-wind", "dash", "dodge", "disengage"].includes(entry.slug)) {
+    return [];
+  }
+  const wantsFriendlyTarget = ["help", "healing-word", "cure-wounds", "healing-wand"].includes(entry.slug);
+  const wantsHostileTarget = ["magic-missile"].includes(entry.slug);
+  const eligible = participants.filter(participant => {
+    if (!actor) return true;
+    if (wantsFriendlyTarget) return participant.team === actor.team;
+    if (wantsHostileTarget) return participant.team !== actor.team;
+    return true;
+  });
+  if (!eligible.length) return [];
+  if (entry.slug === "magic-missile") {
+    return eligible.slice(0, 3).map(participant => participant.id);
+  }
+  const defaultTarget = eligible[0];
+  const promptText = eligible.map(participant => `${participant.id}: ${participant.name}`).join("\n");
+  const selected = window.prompt(`Target ${entry.name} at which participant id?\n${promptText}`, defaultTarget.id);
+  if (selected === null) return [];
+  const target = eligible.find(participant => participant.id === selected.trim());
+  return target ? [target.id] : [];
+}
+
+function previewCompendiumEntry(slug) {
+  const entry = (_compendiumEntries || []).find(item => item.slug === slug);
+  if (!entry) return;
+  const lines = [
+    entry.name,
+    `${entry.category}${entry.action_cost ? ` · ${entry.action_cost.replaceAll("_", " ")}` : ""}${entry.range_feet !== null && entry.range_feet !== undefined ? ` · ${entry.range_feet} ft` : ""}`,
+    entry.description || "",
+    entry.rules_text || "",
+    (entry.applies_conditions || []).length ? `Applies: ${(entry.applies_conditions || []).join(", ")}` : "",
+    Object.keys(entry.resource_costs || {}).length ? `Costs: ${formatResourceCosts(entry.resource_costs || {})}` : "",
+  ].filter(Boolean);
+  showToast(lines.join(" | "), "info", 8000);
+}
+
+function isSpellPrepared(slug) {
+  const normalized = String(slug || "").trim().toLowerCase();
+  return (_sheet?.prepared_spells || []).includes(normalized);
+}
+
+function isItemEquipped(slug) {
+  const normalized = String(slug || "").trim().toLowerCase();
+  return Object.values(_sheet?.equipped_items || {}).includes(normalized);
+}
+
+async function togglePreparedSpell(slug, prepared) {
+  if (!_sheet?.name) {
+    showToast("Create a character sheet first.", "warning");
+    return;
+  }
+  try {
+    const res = await fetch(`/api/campaigns/${CAMPAIGN_ID}/character-sheets/player/player/prepared-spells`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ slug, prepared }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+    if (data.sheet) _sheet = data.sheet;
+    renderSidebar();
+    renderCompendiumSidebar();
+    showToast(data.summary || "Prepared spells updated.", "success");
+  } catch (e) {
+    showError(`Could not update prepared spells: ${e.message}`);
+  }
+}
+
+async function toggleEquipmentEntry(slug, equipped) {
+  if (!_sheet?.name) {
+    showToast("Create a character sheet first.", "warning");
+    return;
+  }
+  try {
+    const res = await fetch(`/api/campaigns/${CAMPAIGN_ID}/character-sheets/player/player/equipment`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ slug, equipped }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+    if (data.sheet) _sheet = data.sheet;
+    renderSidebar();
+    renderCompendiumSidebar();
+    showToast(data.summary || "Equipment updated.", "success");
+  } catch (e) {
+    showError(`Could not update equipment: ${e.message}`);
+  }
+}
+
+function renderGMProcedureSidebar() {
+  const section = document.getElementById("gm-procedure-section");
+  const button = document.getElementById("gm-procedure-preview-btn");
+  const container = document.getElementById("sidebar-gm-procedure");
+  if (!section || !button || !container) return;
+
+  const isRulesMode = isD20RulesMode() && !!_scene;
+  section.style.display = isRulesMode ? "" : "none";
+  if (!isRulesMode) return;
+
+  const currentInput = document.getElementById("user-input")?.value?.trim() || "";
+  button.disabled = !currentInput;
+
+  if (!_gmProcedurePreview) {
+    container.innerHTML = `
+      <div class="gm-empty">
+        Start typing in the scene input box, then preview the likely rules procedure for that intent.
+      </div>
+    `;
+    return;
+  }
+
+  const plan = _gmProcedurePreview.plan || {};
+  const decision = _gmProcedurePreview.suggested_decision || {};
+  const actions = Array.isArray(_gmProcedurePreview.suggested_actions) ? _gmProcedurePreview.suggested_actions : [];
+  const recent = Array.isArray(_gmProcedurePreview.recent_gm_decisions) && _gmProcedurePreview.recent_gm_decisions.length
+    ? _gmProcedurePreview.recent_gm_decisions
+    : _recentGMDecisions;
+  const planHeadline = (plan.resolution_kind || "none").replaceAll("_", " ");
+  const consultBadge = decision.consult_rules
+    ? '<span class="badge yellow">Rules Triggered</span>'
+    : '<span class="badge">Narration</span>';
+  const rollBadge = decision.ask_for_roll
+    ? '<span class="badge green">Roll Likely</span>'
+    : "";
+  const actionMarkup = actions.map((action, index) => `
+    <button class="gm-action-chip" onclick="applySuggestedAction(${index})" title="${escHtml(action.summary || "")}">
+      ${escHtml((action.action_type || "action").replaceAll("_", " "))}
+    </button>
+  `).join("");
+  const recentMarkup = recent.length
+    ? recent.map(entry => {
+        const payload = entry.payload || {};
+        const gmDecision = payload.gm_decision || {};
+        const label = (gmDecision.resolution_kind || entry.source || "decision").replaceAll("_", " ");
+        const mode = gmDecision.player_facing_mode || "narration";
+        return `
+          <div class="gm-decision-item">
+            <div class="gm-decision-head">
+              <div class="sidebar-item-name">${escHtml(label)}</div>
+              <div class="gm-decision-time">${escHtml(formatRelativeAuditTime(entry.created_at || ""))}</div>
+            </div>
+            <div class="sidebar-item-sub muted">${escHtml(mode.replaceAll("_", " "))}</div>
+          </div>
+        `;
+      }).join("")
+    : '<div class="gm-empty">No scene decisions have been captured yet.</div>';
+
+  container.innerHTML = `
+    <div class="gm-procedure-card">
+      <div class="gm-procedure-kicker">Current Intent</div>
+      <div class="gm-procedure-headline">${escHtml(planHeadline === "none" ? "No deterministic procedure strongly indicated yet." : `Likely ${planHeadline} flow`)}</div>
+      <div class="gm-procedure-meta">
+        ${consultBadge}
+        ${rollBadge}
+      </div>
+      <div class="gm-procedure-note">
+        ${escHtml(actions[0]?.summary || "Continue with narration or gather clarification before resolving mechanics.")}
+      </div>
+      ${actionMarkup ? `<div class="gm-procedure-actions">${actionMarkup}</div>` : ""}
+    </div>
+    <div style="margin-top:12px">
+      <div class="sidebar-item-name" style="margin-bottom:6px">Recent GM Decisions</div>
+      ${recentMarkup}
     </div>
   `;
 }
@@ -1418,12 +2003,66 @@ function renderActionLogSidebar() {
 
   container.innerHTML = logs.map(log => {
     const details = log.details || {};
-    const headline = details.total !== undefined
-      ? `${details.source || log.source || "check"} ${details.total} vs DC ${details.difficulty}`
-      : log.summary;
-    const meta = details.outcome
-      ? `${details.outcome.replaceAll("_", " ")}${details.advantage_state && details.advantage_state !== "normal" ? ` · ${details.advantage_state}` : ""}`
-      : "";
+    const attack = details.attack || null;
+    const damage = details.damage || null;
+    const healing = details.healing || null;
+    const resolution = details.resolution || null;
+    let headline = log.summary;
+    let meta = "";
+    if (attack) {
+      headline = `${log.source || "attack"} ${attack.total} vs AC ${attack.target_armor_class}`;
+      meta = `${String(attack.outcome || "").replaceAll("_", " ")}${damage ? ` · ${damage.total} ${damage.damage_type || "damage"}` : ""}`;
+    } else if (healing) {
+      headline = `${log.source || "healing"} restored ${healing.total}`;
+      meta = healing.roll_expression || "";
+    } else if (log.action_type === "campaign_procedure") {
+      headline = `${String(log.source || "procedure").replaceAll("_", " ")}`;
+      const worldTime = details.world_time?.label || "";
+      const subject = details.subject || "";
+      const destination = details.destination || "";
+      const rewards = Object.entries(details.reward_currencies || {})
+        .filter(([, amount]) => Number(amount) > 0)
+        .map(([denomination, amount]) => `${amount} ${denomination}`)
+        .join(", ");
+      const maturedEvents = (details.matured_events || []).map(event => event.title).join(", ");
+      const maturedConsequences = (details.matured_event_consequences || []).map(entry => entry.consequence?.kind || "").filter(Boolean).join(", ");
+      const generatedEvents = (details.generated_events || []).map(event => event.title).join(", ");
+      meta = [
+        worldTime,
+        subject,
+        destination,
+        rewards ? `reward: ${rewards}` : "",
+        maturedEvents ? `escalated: ${maturedEvents}` : "",
+        maturedConsequences ? `fallout: ${maturedConsequences.replaceAll("_", " ")}` : "",
+        generatedEvents ? `events: ${generatedEvents}` : "",
+      ].filter(Boolean).join(" · ");
+    } else if (log.action_type === "rest") {
+      headline = `${String(log.source || "rest").replaceAll("_", " ")}`;
+      const restoredResources = (details.restored_resources || []).map(entry => entry.resource).join(", ");
+      const restoredItems = (details.restored_item_charges || []).map(entry => entry.resource).join(", ");
+      meta = [restoredResources ? `resources: ${restoredResources}` : "", restoredItems ? `items: ${restoredItems}` : ""]
+        .filter(Boolean)
+        .join(" · ");
+    } else if (log.action_type === "quest_progress") {
+      headline = `${details.quest?.title || log.source || "quest progress"}`;
+      const stageId = details.completed_stage_id || "";
+      const stage = (details.quest?.stages || []).find(entry => entry.id === stageId);
+      const worldTime = details.world_time?.label || "";
+      meta = [stage ? `stage: ${stage.description}` : "", worldTime].filter(Boolean).join(" · ");
+    } else if (log.action_type === "treasure") {
+      headline = `${String(log.source || "treasure").replaceAll("_", " ")} reward`;
+      const currencies = details.treasure?.currencies || {};
+      meta = Object.entries(currencies)
+        .filter(([, amount]) => Number(amount) > 0)
+        .map(([denomination, amount]) => `${amount} ${denomination}`)
+        .join(" · ");
+    } else if (resolution && resolution.actor && resolution.opponent) {
+      headline = `${resolution.actor.name} ${resolution.actor.total} vs ${resolution.opponent.name} ${resolution.opponent.total}`;
+      meta = `${String(resolution.winner || "tie").replaceAll("_", " ")}${resolution.margin ? ` · margin ${resolution.margin}` : ""}`;
+    } else if (resolution && resolution.total !== undefined) {
+      headline = `${resolution.source || log.source || "check"} ${resolution.total} vs DC ${resolution.difficulty}`;
+      meta = `${String(resolution.outcome || "").replaceAll("_", " ")}${resolution.advantage_state && resolution.advantage_state !== "normal" ? ` · ${resolution.advantage_state}` : ""}`;
+    }
     return `
       <div class="sidebar-item">
         <div class="sidebar-item-name">${escHtml(log.actor_name || "Player")}</div>
@@ -1432,6 +2071,1082 @@ function renderActionLogSidebar() {
       </div>
     `;
   }).join("");
+}
+
+async function takeCharacterRest(restType) {
+  if (!_sheet?.name) {
+    showToast("Create a character sheet first.", "warning");
+    return;
+  }
+  if (_activeEncounter) {
+    showToast("Complete the active encounter before taking a rest.", "info");
+    return;
+  }
+  try {
+    const res = await fetch(`/api/campaigns/${CAMPAIGN_ID}/character-sheets/player/player/rest`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ rest_type: restType }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+    if (data.sheet) _sheet = data.sheet;
+    await refreshActionLogs();
+    renderSidebar();
+    showToast(data.summary || "Rest completed.", "success", 5000);
+  } catch (e) {
+    showError(`Could not take rest: ${e.message}`);
+  }
+}
+
+async function openAdvanceTimePrompt() {
+  const hoursRaw = window.prompt("Advance how many in-world hours?", "1");
+  if (hoursRaw === null) return;
+  const hours = parseInt(hoursRaw, 10);
+  if (!Number.isFinite(hours) || hours <= 0) {
+    showToast("Enter a positive number of hours.", "warning");
+    return;
+  }
+  const procedureType = (window.prompt("Procedure type? travel / downtime / rest / custom", "travel") || "travel").trim().toLowerCase();
+  const destination = procedureType === "travel"
+    ? (window.prompt("Destination (optional)", _scene?.location || "") || "").trim()
+    : "";
+  const restType = procedureType === "rest"
+    ? ((window.prompt("Rest type? short_rest / long_rest", "long_rest") || "").trim().toLowerCase() || null)
+    : null;
+  try {
+    const res = await fetch(`/api/campaigns/${CAMPAIGN_ID}/procedures/advance-time`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        hours,
+        procedure_type: procedureType || "custom",
+        destination,
+        rest_type: restType,
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+    if (data.campaign) _campaign = data.campaign;
+    if (data.player_sheet) _sheet = data.player_sheet;
+    if (Array.isArray(data.events) && data.events.length) {
+      _events = [...data.events, ...(_events || [])];
+    }
+    if (destination && _scene && procedureType === "travel") _scene.location = destination;
+    await refreshActionLogs();
+    renderSidebar();
+    showToast(data.summary || "Time advanced.", "success", 5000);
+  } catch (e) {
+    showError(`Could not advance time: ${e.message}`);
+  }
+}
+
+async function openDowntimePrompt() {
+  const activityType = (window.prompt("Downtime activity? work / training / research / carouse / craft", "work") || "work").trim().toLowerCase();
+  if (!activityType) return;
+  const daysRaw = window.prompt("How many downtime days?", "1");
+  if (daysRaw === null) return;
+  const days = parseInt(daysRaw, 10);
+  if (!Number.isFinite(days) || days <= 0) {
+    showToast("Enter a positive number of downtime days.", "warning");
+    return;
+  }
+  const subjectPrompt = activityType === "craft"
+    ? "What compendium slug are you crafting? (example: shield, healing-wand)"
+    : "Subject or focus (optional)";
+  const subject = (window.prompt(subjectPrompt, "") || "").trim();
+  const reason = (window.prompt("Why is this downtime happening? (optional)", "") || "").trim();
+  const factionId = activityType === "carouse"
+    ? (window.prompt("Target faction id (optional)", "") || "").trim()
+    : "";
+  const questId = ["research", "training"].includes(activityType)
+    ? (window.prompt("Target quest id (optional)", "") || "").trim()
+    : "";
+  const objectiveId = activityType === "training"
+    ? (window.prompt("Target objective id (optional)", "") || "").trim()
+    : "";
+  try {
+    const res = await fetch(`/api/campaigns/${CAMPAIGN_ID}/procedures/downtime`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        activity_type: activityType,
+        days,
+        subject,
+        reason,
+        faction_id: factionId || null,
+        quest_id: questId || null,
+        objective_id: objectiveId || null,
+        apply_rewards_to_player: true,
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+    if (data.campaign) _campaign = data.campaign;
+    if (data.player_sheet) _sheet = data.player_sheet;
+    if (Array.isArray(data.events) && data.events.length) {
+      _events = [...data.events, ...(_events || [])];
+    }
+    if (Array.isArray(data.quest_updates) && data.quest_updates.length) {
+      data.quest_updates.forEach(updated => {
+        const index = (_quests || []).findIndex(quest => quest.id === updated.id);
+        if (index >= 0) _quests[index] = updated;
+      });
+      _quests = [..._quests];
+    }
+    if (Array.isArray(data.objective_updates) && data.objective_updates.length) {
+      data.objective_updates.forEach(updated => {
+        const index = (_objectives || []).findIndex(objective => objective.id === updated.id);
+        if (index >= 0) _objectives[index] = updated;
+      });
+      _objectives = [..._objectives];
+    }
+    await refreshActionLogs();
+    renderSidebar();
+    showToast(data.summary || "Downtime completed.", "success", 5000);
+  } catch (e) {
+    showError(`Could not run downtime: ${e.message}`);
+  }
+}
+
+async function addCampaignObjective() {
+  const title = (window.prompt("Objective title", "") || "").trim();
+  if (!title) return;
+  const description = (window.prompt("Objective description (optional)", "") || "").trim();
+  try {
+    const res = await fetch(`/api/campaigns/${CAMPAIGN_ID}/objectives`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title, description, status: "active" }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+    _objectives = [...(_objectives || []), data];
+    renderSidebar();
+    showToast(`Objective added: ${title}`, "success", 4000);
+  } catch (e) {
+    showError(`Could not add objective: ${e.message}`);
+  }
+}
+
+async function addCampaignQuest() {
+  const title = (window.prompt("Quest title", "") || "").trim();
+  if (!title) return;
+  const description = (window.prompt("Quest description (optional)", "") || "").trim();
+  const stageText = (window.prompt("Stages (separate with |)", "") || "").trim();
+  const stages = stageText
+    ? stageText.split("|").map((text, index) => ({ description: text.trim(), completed: false, order: index })).filter(stage => stage.description)
+    : [];
+  try {
+    const res = await fetch(`/api/campaigns/${CAMPAIGN_ID}/quests`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title, description, stages, status: "active" }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+    _quests = [...(_quests || []), data];
+    renderSidebar();
+    showToast(`Quest added: ${title}`, "success", 4000);
+  } catch (e) {
+    showError(`Could not add quest: ${e.message}`);
+  }
+}
+
+function findCampaignEvent(eventId) {
+  return (_events || []).find(event => event.id === eventId) || null;
+}
+
+function buildEventDetailsFromPrompts(existing = {}) {
+  const hookType = (window.prompt("Event hook type? encounter / discovery / resource_pressure / social / time_pressure / blank", existing.hook_type || "") || "").trim().toLowerCase();
+  if (hookType === null) return null;
+  const escalationRaw = window.prompt("Escalation hours?", String(existing.escalation_hours ?? 12));
+  if (escalationRaw === null) return null;
+  const escalationHours = parseInt(escalationRaw, 10);
+  const details = { ...existing };
+  if (hookType) details.hook_type = hookType;
+  else delete details.hook_type;
+  if (Number.isFinite(escalationHours) && escalationHours > 0) details.escalation_hours = escalationHours;
+  else delete details.escalation_hours;
+
+  const enemyCountRaw = window.prompt("Enemy count for encounter hooks? Leave blank to keep/remove.", existing.enemy_count ?? "");
+  if (enemyCountRaw === null) return null;
+  const enemyCount = parseInt(enemyCountRaw, 10);
+  if (enemyCountRaw.trim() && Number.isFinite(enemyCount) && enemyCount > 0) details.enemy_count = enemyCount;
+  else delete details.enemy_count;
+
+  const supplyCostRaw = window.prompt("Supply cost in sp for resource pressure? Leave blank to keep/remove.", existing.supply_cost_sp ?? "");
+  if (supplyCostRaw === null) return null;
+  const supplyCost = parseInt(supplyCostRaw, 10);
+  if (supplyCostRaw.trim() && Number.isFinite(supplyCost) && supplyCost >= 0) details.supply_cost_sp = supplyCost;
+  else delete details.supply_cost_sp;
+
+  const factionId = window.prompt("Target faction id (optional)", existing.faction_id || "");
+  if (factionId === null) return null;
+  if (factionId.trim()) details.faction_id = factionId.trim();
+  else delete details.faction_id;
+
+  const questId = window.prompt("Target quest id (optional)", existing.quest_id || "");
+  if (questId === null) return null;
+  if (questId.trim()) details.quest_id = questId.trim();
+  else delete details.quest_id;
+
+  return details;
+}
+
+function upsertCampaignEvent(eventPayload) {
+  if (!eventPayload?.id) return;
+  const current = _events || [];
+  const existingIndex = current.findIndex(event => event.id === eventPayload.id);
+  if (existingIndex >= 0) {
+    current[existingIndex] = eventPayload;
+    _events = [...current];
+  } else {
+    _events = [eventPayload, ...current];
+  }
+}
+
+async function persistCampaignEvent(payload, { refreshLogs = false, successMessage = "Event saved." } = {}) {
+  const res = await fetch(`/api/campaigns/${CAMPAIGN_ID}/events`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+  if (data.player_sheet) _sheet = data.player_sheet;
+  upsertCampaignEvent(data);
+  if (refreshLogs || data.treasure) {
+    await refreshActionLogs();
+  } else {
+    await refreshCampaignRecap();
+  }
+  renderSidebar();
+  showToast(successMessage, "success", 4000);
+  return data;
+}
+
+async function addCampaignEvent() {
+  const title = (window.prompt("Event title", "") || "").trim();
+  if (!title) return;
+  const content = (window.prompt("Event summary", "") || "").trim();
+  const details = buildEventDetailsFromPrompts({});
+  if (details === null) return;
+  try {
+    await persistCampaignEvent({
+      title,
+      content,
+      event_type: "world",
+      status: "pending",
+      details,
+    }, { successMessage: `Event added: ${title}` });
+  } catch (e) {
+    showError(`Could not add event: ${e.message}`);
+  }
+}
+
+async function editCampaignEvent(eventId) {
+  const event = findCampaignEvent(eventId);
+  if (!event) {
+    showToast("Event not found.", "warning");
+    return;
+  }
+  const title = window.prompt("Event title", event.title || "");
+  if (title === null || !title.trim()) return;
+  const content = window.prompt("Event summary", event.content || "");
+  if (content === null) return;
+  const details = buildEventDetailsFromPrompts(event.details || {});
+  if (details === null) return;
+  try {
+    await persistCampaignEvent({
+      id: event.id,
+      title: title.trim(),
+      content: content.trim(),
+      event_type: event.event_type || "world",
+      status: event.status || "pending",
+      world_time_hours: event.world_time_hours,
+      details,
+    }, { successMessage: `Event updated: ${title.trim()}` });
+  } catch (e) {
+    showError(`Could not update event: ${e.message}`);
+  }
+}
+
+async function toggleCampaignEventStatus(eventId) {
+  const event = findCampaignEvent(eventId);
+  if (!event) {
+    showToast("Event not found.", "warning");
+    return;
+  }
+  const nextStatus = event.status === "pending" ? "resolved" : "pending";
+  let generateTreasure = false;
+  let treasureChallengeRating = null;
+  if (nextStatus === "resolved") {
+    const rewardAnswer = (window.prompt("Generate treasure while resolving this event? yes / no", "no") || "no").trim().toLowerCase();
+    generateTreasure = rewardAnswer === "yes" || rewardAnswer === "y";
+    if (generateTreasure) {
+      const crRaw = window.prompt("Treasure challenge rating / reward tier?", "1");
+      if (crRaw === null) return;
+      const parsed = parseInt(crRaw, 10);
+      treasureChallengeRating = Number.isFinite(parsed) && parsed >= 0 ? parsed : 1;
+    }
+  }
+  try {
+    await persistCampaignEvent({
+      id: event.id,
+      title: event.title,
+      content: event.content || "",
+      event_type: event.event_type || "world",
+      status: nextStatus,
+      world_time_hours: event.world_time_hours,
+      details: event.details || {},
+      generate_treasure: generateTreasure,
+      treasure_challenge_rating: treasureChallengeRating,
+      apply_treasure_to_player: true,
+    }, {
+      refreshLogs: nextStatus === "resolved",
+      successMessage: `Event ${nextStatus === "resolved" ? "resolved" : "reopened"}: ${event.title}`,
+    });
+  } catch (e) {
+    showError(`Could not update event status: ${e.message}`);
+  }
+}
+
+async function advanceCampaignQuest() {
+  const activeQuests = (_quests || []).filter(quest => quest.status === "active");
+  if (!activeQuests.length) {
+    showToast("No active quests to advance.", "info");
+    return;
+  }
+  const questList = activeQuests.map((quest, index) => `${index + 1}. ${quest.title}`).join("\n");
+  const questRaw = window.prompt(`Advance which quest?\n${questList}`, "1");
+  if (questRaw === null) return;
+  const questIndex = parseInt(questRaw, 10) - 1;
+  const quest = activeQuests[questIndex];
+  if (!quest) {
+    showToast("Choose a valid quest number.", "warning");
+    return;
+  }
+  const openStages = (quest.stages || []).filter(stage => !stage.completed);
+  const stageList = openStages.map((stage, index) => `${index + 1}. ${stage.description}`).join("\n");
+  const stageRaw = openStages.length ? window.prompt(`Complete which stage for "${quest.title}"?\n${stageList}`, "1") : null;
+  if (openStages.length && stageRaw === null) return;
+  const stageIndex = openStages.length ? parseInt(stageRaw, 10) - 1 : -1;
+  const stage = openStages.length ? openStages[stageIndex] : null;
+  if (openStages.length && !stage) {
+    showToast("Choose a valid stage number.", "warning");
+    return;
+  }
+  const note = (window.prompt("Progress note (optional)", "") || "").trim();
+  try {
+    const res = await fetch(`/api/campaigns/${CAMPAIGN_ID}/procedures/advance-quest`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        quest_id: quest.id,
+        stage_id: stage?.id || null,
+        note,
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+    if (data.campaign) _campaign = data.campaign;
+    if (data.quest) {
+      _quests = (_quests || []).map(existing => existing.id === data.quest.id ? data.quest : existing);
+    }
+    await refreshActionLogs();
+    renderSidebar();
+    showToast(data.summary || `Quest advanced: ${quest.title}`, "success", 5000);
+  } catch (e) {
+    showError(`Could not advance quest: ${e.message}`);
+  }
+}
+
+async function generateEncounterFromEvent(eventId) {
+  try {
+    const res = await fetch(`/api/campaigns/${CAMPAIGN_ID}/events/${eventId}/generate-encounter`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+    if (data.event) {
+      _events = (_events || []).map(event => event.id === data.event.id ? data.event : event);
+    }
+    if (data.encounter) {
+      _activeEncounter = data.encounter;
+    }
+    await refreshActionLogs();
+    renderSidebar();
+    showToast(data.summary || "Encounter generated.", "success", 5000);
+  } catch (e) {
+    showError(`Could not generate encounter: ${e.message}`);
+  }
+}
+
+async function generateTreasureReward() {
+  if (!_sheet?.name) {
+    showToast("Create a character sheet first.", "warning");
+    return;
+  }
+  const crRaw = window.prompt("Treasure challenge rating / reward tier?", "1");
+  if (crRaw === null) return;
+  const challengeRating = parseInt(crRaw, 10);
+  if (!Number.isFinite(challengeRating) || challengeRating < 0) {
+    showToast("Enter a non-negative challenge rating.", "warning");
+    return;
+  }
+  const sourceType = (window.prompt("Treasure source? loot / quest / event / encounter", "loot") || "loot").trim().toLowerCase();
+  const sourceName = (window.prompt("Source name (optional)", _activeEncounter?.name || "") || "").trim();
+  try {
+    const res = await fetch(`/api/campaigns/${CAMPAIGN_ID}/procedures/generate-treasure`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        challenge_rating: challengeRating,
+        source_type: sourceType || "loot",
+        source_name: sourceName,
+        apply_to_player: true,
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+    if (data.player_sheet) _sheet = data.player_sheet;
+    await refreshActionLogs();
+    renderSidebar();
+    showToast(data.summary || "Treasure generated.", "success", 5000);
+  } catch (e) {
+    showError(`Could not generate treasure: ${e.message}`);
+  }
+}
+
+async function refreshCampaignRecap() {
+  try {
+    const filterValue = document.getElementById("recap-filter")?.value || "all";
+    const res = await fetch(`/api/campaigns/${CAMPAIGN_ID}/recap?limit=12&kind=${encodeURIComponent(filterValue)}`);
+    const data = await res.json().catch(() => ({ items: [], summary: "" }));
+    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+    _campaignRecap = {
+      items: Array.isArray(data.items) ? data.items : [],
+      summary: data.summary || "",
+    };
+  } catch {
+    _campaignRecap = { items: [], summary: "" };
+  }
+}
+
+function renderEncounterSidebar() {
+  const section = document.getElementById("encounter-section");
+  const container = document.getElementById("sidebar-encounter");
+  const startBtn = document.getElementById("encounter-start-btn");
+  const moveBtn = document.getElementById("encounter-move-btn");
+  const reactBtn = document.getElementById("encounter-react-btn");
+  const conditionBtn = document.getElementById("encounter-condition-btn");
+  const concentrationBtn = document.getElementById("encounter-concentration-btn");
+  const stabilizeBtn = document.getElementById("encounter-stabilize-btn");
+  const advanceBtn = document.getElementById("encounter-advance-btn");
+  const completeBtn = document.getElementById("encounter-complete-btn");
+  if (!section || !container || !startBtn || !moveBtn || !reactBtn || !conditionBtn || !concentrationBtn || !stabilizeBtn || !advanceBtn || !completeBtn) return;
+
+  const isRulesMode = isD20RulesMode() && !!_scene;
+  section.style.display = isRulesMode ? "" : "none";
+  if (!isRulesMode) return;
+
+  const encounter = _activeEncounter;
+  startBtn.disabled = !!encounter;
+  advanceBtn.disabled = !encounter;
+  completeBtn.disabled = !encounter;
+  moveBtn.disabled = !encounter;
+  reactBtn.disabled = !encounter;
+  conditionBtn.disabled = !encounter;
+  concentrationBtn.disabled = !encounter;
+  stabilizeBtn.disabled = !encounter;
+
+  if (!encounter) {
+    container.innerHTML = '<div class="gm-empty">No active encounter. Start one to track initiative and turn order for this scene.</div>';
+    return;
+  }
+
+  const playerParticipant = (encounter.participants || []).find(participant => participant.owner_type === "player");
+  const currentParticipant = encounter.current_participant;
+  moveBtn.disabled = !currentParticipant || currentParticipant.owner_type !== "player";
+  reactBtn.disabled = !playerParticipant || !playerParticipant.reaction_available;
+  stabilizeBtn.disabled = !(encounter.participants || []).some(participant => participant.life_state === "down");
+
+  const participants = encounter.participants || [];
+  const participantMarkup = participants.map((participant, index) => `
+    <div class="sidebar-item">
+      <div class="sidebar-item-name">${index === encounter.current_turn_index ? "▶ " : ""}${escHtml(participant.name)}</div>
+      <div class="sidebar-item-sub muted">
+        Init ${participant.initiative_total}${participant.current_hp !== null && participant.current_hp !== undefined ? ` · HP ${participant.current_hp}/${participant.max_hp}` : ""}${participant.life_state && participant.life_state !== "active" ? ` · ${escHtml(participant.life_state)}` : ""}
+      </div>
+      ${participant.concentration_label ? `<div class="sidebar-item-sub muted">Concentration: ${escHtml(participant.concentration_label)}${participant.pending_concentration_dc ? ` · DC ${participant.pending_concentration_dc}` : ""}</div>` : ""}
+      ${(participant.conditions || []).length ? `<div class="sidebar-item-sub muted">Conditions: ${escHtml((participant.conditions || []).map(condition => {
+        const duration = participant.condition_durations?.[condition];
+        return duration ? `${condition} (${duration})` : condition;
+      }).join(", "))}</div>` : ""}
+    </div>
+  `).join("");
+
+  container.innerHTML = `
+    <div class="sidebar-item">
+      <div class="sidebar-item-name">${escHtml(encounter.name)}</div>
+      <div class="sidebar-item-sub muted">Round ${encounter.round_number} · ${escHtml(encounter.status)}</div>
+    </div>
+    ${encounter.current_participant ? `
+      <div class="sidebar-item">
+        <div class="sidebar-item-sub">Current turn: ${escHtml(encounter.current_participant.name)}</div>
+        <div class="sidebar-item-sub muted">Action ${encounter.current_participant.action_available ? "available" : "spent"} · Bonus ${encounter.current_participant.bonus_action_available ? "available" : "spent"} · Move ${encounter.current_participant.movement_remaining ?? 0}</div>
+      </div>
+    ` : ""}
+    ${playerParticipant ? `
+      <div class="sidebar-item">
+        <div class="sidebar-item-sub">Player reaction: ${playerParticipant.reaction_available ? "available" : "spent"}</div>
+        <div class="sidebar-item-sub muted">${escHtml(playerParticipant.name)}${currentParticipant && currentParticipant.id !== playerParticipant.id ? " can still react off-turn." : " is the current actor."}</div>
+      </div>
+    ` : ""}
+    ${participantMarkup || '<div class="gm-empty">No participants.</div>'}
+  `;
+}
+
+function populateEncounterTargetOptions(selectId, emptyLabel, filterFn = null) {
+  const select = document.getElementById(selectId);
+  if (!select) return;
+  const currentValue = select.value;
+  const participants = (_activeEncounter?.participants || []).filter(participant => participant.is_active !== false);
+  const filtered = filterFn ? participants.filter(filterFn) : participants;
+  select.innerHTML = `<option value="">${escHtml(emptyLabel)}</option>` + filtered.map(participant => (
+    `<option value="${escHtml(participant.id)}">${escHtml(participant.name)}${participant.team ? ` (${escHtml(participant.team)})` : ""}</option>`
+  )).join("");
+  if ([...select.options].some(option => option.value === currentValue)) {
+    select.value = currentValue;
+  }
+}
+
+function updateAttackTargetPreview() {
+  const select = document.getElementById("attack-target-participant");
+  const preview = document.getElementById("attack-target-preview");
+  const acInput = document.getElementById("attack-target-ac");
+  if (!select || !preview || !acInput) return;
+  const participant = (_activeEncounter?.participants || []).find(entry => entry.id === select.value);
+  if (!participant) {
+    preview.textContent = "Manual target AC entry.";
+    return;
+  }
+  if (participant.armor_class !== null && participant.armor_class !== undefined) {
+    acInput.value = String(participant.armor_class);
+  }
+  preview.textContent = `Targeting ${participant.name}${participant.current_hp !== null && participant.current_hp !== undefined ? ` · HP ${participant.current_hp}/${participant.max_hp}` : ""}`;
+}
+
+function updateHealingTargetPreview() {
+  const select = document.getElementById("healing-target-participant");
+  const preview = document.getElementById("healing-target-preview");
+  const applyCheckbox = document.getElementById("healing-apply-to-sheet");
+  if (!select || !preview || !applyCheckbox) return;
+  const participant = (_activeEncounter?.participants || []).find(entry => entry.id === select.value);
+  if (!participant) {
+    applyCheckbox.disabled = false;
+    preview.textContent = `Current sheet: HP ${_sheet.current_hp}/${_sheet.max_hp}${_sheet.temp_hp ? ` (+${_sheet.temp_hp} temp)` : ""}.`;
+    return;
+  }
+  applyCheckbox.checked = false;
+  applyCheckbox.disabled = true;
+  preview.textContent = `Targeting ${participant.name}${participant.current_hp !== null && participant.current_hp !== undefined ? ` · HP ${participant.current_hp}/${participant.max_hp}` : ""}`;
+}
+
+async function startSceneEncounter() {
+  if (!isD20RulesMode() || !_scene) {
+    showToast("An encounter can only be started in an active rules-mode scene.", "info");
+    return;
+  }
+  if (_activeEncounter) {
+    showToast("There is already an active encounter in this scene.", "info");
+    return;
+  }
+
+  const participants = [
+    { owner_type: "player", owner_id: "player", team: "player", name: _sheet?.name || _pc?.name || "Player" },
+    ...((_scene.npc_ids || []).map(id => {
+      const npc = (_npcs || []).find(entry => entry.id === id);
+      return {
+        owner_type: "npc",
+        owner_id: id,
+        team: "enemy",
+        name: npc?.name || "NPC",
+      };
+    })),
+  ];
+
+  try {
+    const res = await fetch(`/api/campaigns/${CAMPAIGN_ID}/encounters`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: _scene?.title ? `${_scene.title} Encounter` : "Scene Encounter",
+        scene_id: _scene.id,
+        participants,
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+    _activeEncounter = data;
+    await refreshActionLogs();
+    renderSidebar();
+    showToast(`Encounter started. ${data.current_participant?.name || "First participant"} is up.`, "success");
+  } catch (e) {
+    showError(`Could not start encounter: ${e.message}`);
+  }
+}
+
+async function advanceEncounterTurn() {
+  if (!_activeEncounter) return;
+  try {
+    const res = await fetch(`/api/campaigns/${CAMPAIGN_ID}/encounters/${_activeEncounter.id}/advance`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ note: "" }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+    _activeEncounter = data;
+    await refreshActionLogs();
+    renderSidebar();
+    showToast(`Round ${data.round_number}: ${data.current_participant?.name || "Next participant"} is up.`, "info");
+  } catch (e) {
+    showError(`Could not advance encounter: ${e.message}`);
+  }
+}
+
+async function spendEncounterMovement() {
+  if (!_activeEncounter?.id || !_activeEncounter?.current_participant) {
+    showToast("No active encounter turn to move in.", "info");
+    return;
+  }
+  const current = _activeEncounter.current_participant;
+  const promptLabel = `${current.name} has ${current.movement_remaining ?? 0} feet remaining. How many feet should be spent?`;
+  const raw = window.prompt(promptLabel, "5");
+  if (raw === null) return;
+  const distance = parseInt(raw, 10);
+  if (!Number.isFinite(distance) || distance < 0) {
+    showError("Enter a non-negative number of feet.");
+    return;
+  }
+  try {
+    const res = await fetch(`/api/campaigns/${CAMPAIGN_ID}/encounters/${_activeEncounter.id}/movement`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ distance }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+    if (data.encounter) _activeEncounter = data.encounter;
+    await refreshActionLogs();
+    renderSidebar();
+    showToast(data.summary || "Movement spent.", "info");
+  } catch (e) {
+    showError(`Could not spend movement: ${e.message}`);
+  }
+}
+
+async function useEncounterReaction() {
+  if (!_activeEncounter?.id) {
+    showToast("No active encounter to react in.", "info");
+    return;
+  }
+  const playerParticipant = (_activeEncounter.participants || []).find(participant => participant.owner_type === "player");
+  if (!playerParticipant) {
+    showError("No player participant is tracked in the active encounter.");
+    return;
+  }
+  if (!playerParticipant.reaction_available) {
+    showToast("Your reaction is already spent.", "info");
+    return;
+  }
+  const note = window.prompt(`Use ${playerParticipant.name}'s reaction for what?`, "Opportunity attack / defensive maneuver");
+  if (note === null) return;
+  try {
+    const res = await fetch(`/api/campaigns/${CAMPAIGN_ID}/encounters/${_activeEncounter.id}/reaction`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ participant_id: playerParticipant.id, note }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+    if (data.encounter) _activeEncounter = data.encounter;
+    await refreshActionLogs();
+    renderSidebar();
+    showToast(data.summary || "Reaction used.", "info");
+  } catch (e) {
+    showError(`Could not use reaction: ${e.message}`);
+  }
+}
+
+async function applyEncounterCondition() {
+  if (!_activeEncounter?.id) {
+    showToast("No active encounter to modify.", "info");
+    return;
+  }
+  const participants = _activeEncounter.participants || [];
+  if (!participants.length) {
+    showToast("No encounter participants available.", "info");
+    return;
+  }
+  const targetName = window.prompt(`Apply a condition to whom?\n${participants.map(participant => participant.name).join(", ")}`, participants[0].name || "");
+  if (targetName === null) return;
+  const participant = participants.find(entry => String(entry.name).toLowerCase() === String(targetName).trim().toLowerCase()) || participants[0];
+  const condition = window.prompt(`What condition should ${participant.name} gain?`, "poisoned");
+  if (condition === null || !condition.trim()) return;
+  const durationRaw = window.prompt("How many rounds should it last? Leave blank for indefinite.", "2");
+  if (durationRaw === null) return;
+  const duration_rounds = durationRaw.trim() ? parseInt(durationRaw, 10) : null;
+  if (durationRaw.trim() && (!Number.isFinite(duration_rounds) || duration_rounds <= 0)) {
+    showError("Enter a positive number of rounds, or leave it blank.");
+    return;
+  }
+  try {
+    const res = await fetch(`/api/campaigns/${CAMPAIGN_ID}/encounters/${_activeEncounter.id}/conditions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        participant_id: participant.id,
+        condition,
+        duration_rounds,
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+    if (data.encounter) _activeEncounter = data.encounter;
+    await refreshActionLogs();
+    renderSidebar();
+    showToast(data.summary || "Condition applied.", "info");
+  } catch (e) {
+    showError(`Could not apply condition: ${e.message}`);
+  }
+}
+
+async function stabilizeEncounterParticipant() {
+  if (!_activeEncounter?.id) {
+    showToast("No active encounter to stabilize in.", "info");
+    return;
+  }
+  const downed = (_activeEncounter.participants || []).filter(participant => participant.life_state === "down");
+  if (!downed.length) {
+    showToast("No downed participants need stabilization.", "info");
+    return;
+  }
+  const targetName = window.prompt(`Stabilize whom?\n${downed.map(participant => participant.name).join(", ")}`, downed[0].name || "");
+  if (targetName === null) return;
+  const participant = downed.find(entry => String(entry.name).toLowerCase() === String(targetName).trim().toLowerCase()) || downed[0];
+  try {
+    const res = await fetch(`/api/campaigns/${CAMPAIGN_ID}/encounters/${_activeEncounter.id}/stabilize`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ participant_id: participant.id }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+    if (data.encounter) _activeEncounter = data.encounter;
+    await refreshActionLogs();
+    renderSidebar();
+    showToast(data.summary || "Participant stabilized.", "success");
+  } catch (e) {
+    showError(`Could not stabilize participant: ${e.message}`);
+  }
+}
+
+async function toggleEncounterConcentration() {
+  if (!_activeEncounter?.id) {
+    showToast("No active encounter to update.", "info");
+    return;
+  }
+  const participants = _activeEncounter.participants || [];
+  if (!participants.length) {
+    showToast("No encounter participants available.", "info");
+    return;
+  }
+  const targetName = window.prompt(`Set concentration for whom?\n${participants.map(participant => participant.name).join(", ")}`, participants[0].name || "");
+  if (targetName === null) return;
+  const participant = participants.find(entry => String(entry.name).toLowerCase() === String(targetName).trim().toLowerCase()) || participants[0];
+  const currentlyActive = !!participant.concentration_label;
+  if (currentlyActive && participant.pending_concentration_dc) {
+    const keep = window.confirm(`${participant.name} has a pending concentration DC ${participant.pending_concentration_dc}. Did they maintain concentration?`);
+    try {
+      const res = await fetch(`/api/campaigns/${CAMPAIGN_ID}/encounters/${_activeEncounter.id}/concentration-check`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ participant_id: participant.id, success: keep }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+      if (data.encounter) _activeEncounter = data.encounter;
+      await refreshActionLogs();
+      renderSidebar();
+      showToast(data.summary || "Concentration resolved.", keep ? "success" : "info");
+    } catch (e) {
+      showError(`Could not resolve concentration: ${e.message}`);
+    }
+    return;
+  }
+  if (currentlyActive) {
+    const shouldEnd = window.confirm(`${participant.name} is concentrating on "${participant.concentration_label}". End concentration?`);
+    if (!shouldEnd) return;
+    try {
+      const res = await fetch(`/api/campaigns/${CAMPAIGN_ID}/encounters/${_activeEncounter.id}/concentration`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ participant_id: participant.id, active: false }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+      if (data.encounter) _activeEncounter = data.encounter;
+      await refreshActionLogs();
+      renderSidebar();
+      showToast(data.summary || "Concentration ended.", "info");
+    } catch (e) {
+      showError(`Could not update concentration: ${e.message}`);
+    }
+    return;
+  }
+  const label = window.prompt(`What is ${participant.name} concentrating on?`, "Bless, Hunter's Mark, etc.");
+  if (label === null || !label.trim()) return;
+  try {
+    const res = await fetch(`/api/campaigns/${CAMPAIGN_ID}/encounters/${_activeEncounter.id}/concentration`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ participant_id: participant.id, active: true, label }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+    if (data.encounter) _activeEncounter = data.encounter;
+    await refreshActionLogs();
+    renderSidebar();
+    showToast(data.summary || "Concentration started.", "success");
+  } catch (e) {
+    showError(`Could not update concentration: ${e.message}`);
+  }
+}
+
+async function completeActiveEncounter() {
+  if (!_activeEncounter) return;
+  const summary = prompt("Encounter summary (optional):", "") || "";
+  const treasureAnswer = (window.prompt("Generate treasure from this encounter? yes / no", "no") || "no").trim().toLowerCase();
+  const generateTreasure = treasureAnswer === "yes" || treasureAnswer === "y";
+  const treasureChallengeRating = generateTreasure
+    ? parseInt(window.prompt("Treasure challenge rating / reward tier?", String(Math.max(1, (_activeEncounter.participants || []).filter(p => p.team === "enemy").length))) || "1", 10)
+    : null;
+  try {
+    const res = await fetch(`/api/campaigns/${CAMPAIGN_ID}/encounters/${_activeEncounter.id}/complete`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        summary,
+        generate_treasure: generateTreasure,
+        treasure_challenge_rating: Number.isFinite(treasureChallengeRating) ? treasureChallengeRating : null,
+        apply_treasure_to_player: true,
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+    if (data.player_sheet) _sheet = data.player_sheet;
+    _activeEncounter = null;
+    await refreshActionLogs();
+    renderSidebar();
+    showToast(data.summary || "Encounter completed.", "success");
+  } catch (e) {
+    showError(`Could not complete encounter: ${e.message}`);
+  }
+}
+
+function scheduleGMProcedurePreview() {
+  if (!isD20RulesMode() || !_scene) return;
+  clearTimeout(_gmPreviewTimer);
+  _gmPreviewTimer = setTimeout(() => {
+    previewCurrentIntent({ quiet: true });
+  }, 350);
+}
+
+async function previewCurrentIntent(options = {}) {
+  const quiet = options.quiet === true;
+  const input = document.getElementById("user-input");
+  const message = input?.value?.trim() || "";
+  if (!message) {
+    _gmProcedurePreview = null;
+    renderGMProcedureSidebar();
+    return;
+  }
+
+  try {
+    const res = await fetch(`/api/campaigns/${CAMPAIGN_ID}/scenes/${_scene.id}/gm-procedure-preview`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+    _gmProcedurePreview = data;
+    _recentGMDecisions = Array.isArray(data.recent_gm_decisions) ? data.recent_gm_decisions : _recentGMDecisions;
+    renderGMProcedureSidebar();
+  } catch (e) {
+    if (!quiet) showError(`Could not preview GM procedure: ${e.message}`);
+  }
+}
+
+function applySuggestedAction(index) {
+  const actions = _gmProcedurePreview?.suggested_actions || [];
+  const action = actions[index];
+  if (!action) return;
+
+  if (action.action_type === "check") {
+    openResolveCheckModal(action.payload_template || {});
+    return;
+  }
+  if (action.action_type === "attack") {
+    openResolveAttackModal(action.payload_template || {});
+    return;
+  }
+  if (action.action_type === "healing") {
+    openResolveHealingModal(action.payload_template || {});
+    return;
+  }
+  if (action.action_type === "contested_check") {
+    openResolveContestedModal(action.payload_template || {});
+    return;
+  }
+  if (action.action_type === "compendium_action") {
+    const slug = action.payload_template?.slug || "";
+    if (slug) {
+      useCompendiumEntry(slug);
+      return;
+    }
+    showToast(action.summary || "A compendium action likely applies here.", "info");
+    return;
+  }
+  if (action.action_type === "passive_check") {
+    const sources = (action.payload_template?.passive_sources || []).join(", ");
+    showToast(action.summary || `Consult passive ${sources || "awareness"} before asking for a roll.`, "info", 5000);
+    return;
+  }
+
+  showToast(action.summary || "Continue with narration.", "info");
+}
+
+function formatRelativeAuditTime(value) {
+  if (!value) return "";
+  const dt = new Date(value);
+  if (Number.isNaN(dt.getTime())) return "";
+  return dt.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}
+
+async function refreshSceneGMDecisions(options = {}) {
+  if (!_scene) return null;
+  const autoHandle = options.autoHandle !== false;
+  try {
+    const res = await fetch(`/api/campaigns/${CAMPAIGN_ID}/scenes/${_scene.id}/gm-decisions?n=5`);
+    const data = await res.json().catch(() => ([]));
+    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+    _recentGMDecisions = Array.isArray(data) ? data : [];
+    if (_gmProcedurePreview) {
+      _gmProcedurePreview.recent_gm_decisions = _recentGMDecisions;
+    }
+    renderGMProcedureSidebar();
+    const latest = _recentGMDecisions[0] || null;
+    if (autoHandle && latest) {
+      await maybeHandleLatestGMDecision(latest);
+    }
+    return latest;
+  } catch (e) {
+    return null;
+  }
+}
+
+async function maybeHandleLatestGMDecision(entry) {
+  if (!entry || entry.id === _lastHandledGMDecisionId) return;
+  const decision = entry.payload || {};
+  _lastHandledGMDecisionId = entry.id;
+
+  if (decision.ask_follow_up && decision.follow_up_question) {
+    showToast(decision.follow_up_question, "info", 6000);
+    return;
+  }
+  if (!decision.consult_rules || decision.player_facing_mode !== "rules_handoff") {
+    return;
+  }
+  if (hasOpenModal()) {
+    showToast(`Rules handoff ready: ${String(decision.resolution_kind || "action").replaceAll("_", " ")}.`, "info");
+    return;
+  }
+
+  const prefill = buildActionPrefillFromDecision(decision);
+  const kind = decision.resolution_kind;
+  if (kind === "check") {
+    openResolveCheckModal(prefill);
+  } else if (kind === "attack") {
+    openResolveAttackModal(prefill);
+  } else if (kind === "healing") {
+    openResolveHealingModal(prefill);
+  } else if (kind === "contested_check") {
+    openResolveContestedModal(prefill);
+  } else if (kind === "compendium_action") {
+    await previewCurrentIntent({ quiet: true });
+    const action = (_gmProcedurePreview?.suggested_actions || []).find(item => item.action_type === "compendium_action");
+    const slug = action?.payload_template?.slug || "";
+    if (slug) {
+      useCompendiumEntry(slug);
+    } else {
+      showToast("A named action or spell likely applies here. Check the Compendium sidebar.", "info", 5000);
+    }
+  } else if (kind === "passive_check") {
+    const sources = (decision.passive_sources || []).join(", ");
+    showToast(`Consult passive ${sources || "perception"} before calling for an active roll.`, "info", 5000);
+  }
+}
+
+function buildActionPrefillFromDecision(decision) {
+  const reason = document.getElementById("user-input")?.value?.trim() || "";
+  if (decision.resolution_kind === "attack") {
+    return {
+      source: "",
+      target_armor_class: 10,
+      roll_expression: "d20",
+      advantage_state: "normal",
+      damage_roll_expression: "1d6",
+      damage_modifier: 0,
+      damage_type: "",
+      reason,
+    };
+  }
+  if (decision.resolution_kind === "healing") {
+    return {
+      source: "healing",
+      roll_expression: "1d4",
+      modifier: 0,
+      apply_to_sheet: true,
+      reason,
+    };
+  }
+  if (decision.resolution_kind === "contested_check") {
+    return {
+      actor_source: "",
+      opponent_source: "",
+      opponent_name: "Opponent",
+      roll_expression: "d20",
+      actor_advantage_state: "normal",
+      opponent_advantage_state: "normal",
+      reason,
+    };
+  }
+  return {
+    source: "",
+    difficulty: 15,
+    roll_expression: "d20",
+    advantage_state: "normal",
+    reason,
+  };
+}
+
+function hasOpenModal() {
+  return [...document.querySelectorAll(".modal-backdrop")].some(el => !el.classList.contains("hidden"));
 }
 
 function buildContextModal() {
@@ -1504,7 +3219,7 @@ function appendDiceRoll(label, rolls, mod, total) {
   scrollToBottom();
 }
 
-function openResolveCheckModal() {
+function openResolveCheckModal(prefill = {}) {
   if (_campaign?.play_mode !== "rules") {
     showToast("Check resolution is only available in rules mode.", "info");
     return;
@@ -1513,15 +3228,133 @@ function openResolveCheckModal() {
     showToast("Create a character sheet on the campaign overview first.", "warning");
     return;
   }
-  document.getElementById("check-source").value = "";
-  document.getElementById("check-difficulty").value = "15";
-  document.getElementById("check-advantage").value = "normal";
-  document.getElementById("check-roll-expression").value = "d20";
-  document.getElementById("check-reason").value = "";
+  document.getElementById("check-source").value = prefill.source || "";
+  document.getElementById("check-difficulty").value = String(prefill.difficulty ?? 15);
+  document.getElementById("check-advantage").value = prefill.advantage_state || "normal";
+  document.getElementById("check-roll-expression").value = prefill.roll_expression || "d20";
+  document.getElementById("check-reason").value = prefill.reason || (document.getElementById("user-input")?.value?.trim() || "");
+  document.getElementById("check-action-cost").value = prefill.action_cost || "action";
+  document.getElementById("check-narrate-outcome").checked = true;
   document.getElementById("resolve-check-preview").textContent =
     `Using ${_sheet.name}'s sheet from ${_campaign.system_pack || "d20-fantasy-core"}.`;
   openModal("resolve-check-modal");
   setTimeout(() => document.getElementById("check-source").focus(), 50);
+}
+
+function openResolveAttackModal(prefill = {}) {
+  if (!isD20RulesMode()) {
+    showToast("Attack resolution is only available in d20 rules mode.", "info");
+    return;
+  }
+  if (!_sheet || !_sheet.name) {
+    showToast("Create a character sheet on the campaign overview first.", "warning");
+    return;
+  }
+  populateEncounterTargetOptions("attack-target-participant", "No encounter target", participant => participant.team !== "player");
+  document.getElementById("attack-source").value = prefill.source || "";
+  document.getElementById("attack-target-participant").value = prefill.target_participant_id || "";
+  document.getElementById("attack-target-ac").value = String(prefill.target_armor_class ?? 10);
+  document.getElementById("attack-advantage").value = prefill.advantage_state || "normal";
+  document.getElementById("attack-roll-expression").value = prefill.roll_expression || "d20";
+  document.getElementById("attack-damage-roll").value = prefill.damage_roll_expression || "1d6";
+  document.getElementById("attack-damage-modifier").value = String(prefill.damage_modifier ?? 0);
+  document.getElementById("attack-damage-type").value = prefill.damage_type || "";
+  document.getElementById("attack-range-feet").value = prefill.range_feet ?? "";
+  document.getElementById("attack-target-distance").value = prefill.target_distance_feet ?? "";
+  document.getElementById("attack-resource-costs").value = formatResourceCosts(prefill.resource_costs || {});
+  document.getElementById("attack-reason").value = prefill.reason || (document.getElementById("user-input")?.value?.trim() || "");
+  document.getElementById("attack-action-cost").value = prefill.action_cost || "action";
+  document.getElementById("attack-narrate-outcome").checked = true;
+  document.getElementById("resolve-attack-preview").textContent = `Rolling against ${_sheet.name}'s current sheet and saving the result to the action log.`;
+  updateAttackTargetPreview();
+  openModal("resolve-attack-modal");
+  setTimeout(() => document.getElementById("attack-source").focus(), 50);
+}
+
+function openResolveHealingModal(prefill = {}) {
+  if (!isD20RulesMode()) {
+    showToast("Healing resolution is only available in d20 rules mode.", "info");
+    return;
+  }
+  if (!_sheet || !_sheet.name) {
+    showToast("Create a character sheet on the campaign overview first.", "warning");
+    return;
+  }
+  populateEncounterTargetOptions("healing-target-participant", "Active player sheet");
+  document.getElementById("healing-source").value = prefill.source || "healing";
+  document.getElementById("healing-target-participant").value = prefill.target_participant_id || "";
+  document.getElementById("healing-roll-expression").value = prefill.roll_expression || "1d4";
+  document.getElementById("healing-modifier").value = String(prefill.modifier ?? 0);
+  document.getElementById("healing-range-feet").value = prefill.range_feet ?? "";
+  document.getElementById("healing-target-distance").value = prefill.target_distance_feet ?? "";
+  document.getElementById("healing-apply-to-sheet").checked = prefill.apply_to_sheet !== false;
+  document.getElementById("healing-resource-costs").value = formatResourceCosts(prefill.resource_costs || {});
+  document.getElementById("healing-reason").value = prefill.reason || (document.getElementById("user-input")?.value?.trim() || "");
+  document.getElementById("healing-action-cost").value = prefill.action_cost || "action";
+  document.getElementById("healing-narrate-outcome").checked = true;
+  document.getElementById("resolve-healing-preview").textContent = `Resolve healing and persist the result to the action log.`;
+  updateHealingTargetPreview();
+  openModal("resolve-healing-modal");
+  setTimeout(() => document.getElementById("healing-source").focus(), 50);
+}
+
+function populateContestedOpponentOptions() {
+  const select = document.getElementById("contested-opponent-owner-id");
+  if (!select) return;
+  const currentValue = select.value;
+  const livingNpcs = (_npcs || []).filter(n => n.is_alive);
+  select.innerHTML = '<option value="">Custom opponent / no sheet</option>' + livingNpcs.map(n => (
+    `<option value="${escHtml(n.id)}">${escHtml(n.name)}${n.role ? ` (${escHtml(n.role)})` : ""}</option>`
+  )).join("");
+  if ([...select.options].some(option => option.value === currentValue)) {
+    select.value = currentValue;
+  }
+}
+
+function updateContestedOpponentMode() {
+  const select = document.getElementById("contested-opponent-owner-id");
+  const selectedId = select?.value || "";
+  const nameInput = document.getElementById("contested-opponent-name");
+  const modifierInput = document.getElementById("contested-opponent-modifier");
+  if (!nameInput || !modifierInput) return;
+  if (!selectedId) {
+    modifierInput.disabled = false;
+    document.getElementById("resolve-contested-preview").textContent = "Using a custom opponent modifier.";
+    return;
+  }
+  const npc = (_npcs || []).find(entry => entry.id === selectedId);
+  if (npc) nameInput.value = npc.name || "Opponent";
+  modifierInput.disabled = true;
+  document.getElementById("resolve-contested-preview").textContent = npc
+    ? `Using ${npc.name}'s NPC sheet if one exists.`
+    : "Using selected NPC sheet.";
+}
+
+function openResolveContestedModal(prefill = {}) {
+  if (!isD20RulesMode()) {
+    showToast("Contested checks are only available in d20 rules mode.", "info");
+    return;
+  }
+  if (!_sheet || !_sheet.name) {
+    showToast("Create a character sheet on the campaign overview first.", "warning");
+    return;
+  }
+  populateContestedOpponentOptions();
+  document.getElementById("contested-actor-source").value = prefill.actor_source || "";
+  document.getElementById("contested-opponent-source").value = prefill.opponent_source || "";
+  document.getElementById("contested-opponent-owner-id").value = prefill.opponent_owner_id || "";
+  document.getElementById("contested-opponent-name").value = prefill.opponent_name || "Opponent";
+  document.getElementById("contested-opponent-modifier").value = String(prefill.opponent_modifier ?? 0);
+  document.getElementById("contested-roll-expression").value = prefill.roll_expression || "d20";
+  document.getElementById("contested-actor-advantage").value = prefill.actor_advantage_state || "normal";
+  document.getElementById("contested-opponent-advantage").value = prefill.opponent_advantage_state || "normal";
+  document.getElementById("contested-resource-costs").value = formatResourceCosts(prefill.resource_costs || {});
+  document.getElementById("contested-reason").value = prefill.reason || (document.getElementById("user-input")?.value?.trim() || "");
+  document.getElementById("contested-action-cost").value = prefill.action_cost || "action";
+  document.getElementById("contested-narrate-outcome").checked = true;
+  updateContestedOpponentMode();
+  openModal("resolve-contested-check-modal");
+  setTimeout(() => document.getElementById("contested-actor-source").focus(), 50);
 }
 
 function openSheetStateModal() {
@@ -1551,6 +3384,8 @@ async function submitResolveCheck() {
   const advantage_state = document.getElementById("check-advantage").value || "normal";
   const roll_expression = document.getElementById("check-roll-expression").value.trim() || "d20";
   const reason = document.getElementById("check-reason").value.trim();
+  const action_cost = document.getElementById("check-action-cost").value || "action";
+  const narrateOutcome = document.getElementById("check-narrate-outcome").checked;
   const submitBtn = document.getElementById("resolve-check-submit");
 
   if (!source) {
@@ -1564,19 +3399,238 @@ async function submitResolveCheck() {
     const res = await fetch(`/api/campaigns/${CAMPAIGN_ID}/checks/resolve`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ source, difficulty, advantage_state, roll_expression, reason }),
+      body: JSON.stringify({ source, difficulty, advantage_state, roll_expression, action_cost, reason }),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
 
     appendDiceRoll(`${source} check`, data.dice_rolls || [], data.modifier || 0, data.total || 0);
+    if (data.encounter) _activeEncounter = data.encounter;
     await refreshActionLogs();
     renderSidebar();
     closeModal("resolve-check-modal");
     const resultText = `${source} ${data.total} vs DC ${difficulty} (${String(data.outcome || "").replaceAll("_", " ")})`;
     showToast(resultText, data.success ? "success" : "info");
+    if (narrateOutcome) {
+      await streamMechanicsFollowup(
+        `Resolved check: ${resultText}. Narrate the immediate fictional outcome and consequence of that result.`
+      );
+    }
   } catch (e) {
     showError(`Could not resolve check: ${e.message}`);
+  } finally {
+    submitBtn.disabled = false;
+    submitBtn.textContent = "Resolve";
+  }
+}
+
+async function submitResolveAttack() {
+  const source = document.getElementById("attack-source").value.trim();
+  const target_participant_id = document.getElementById("attack-target-participant").value || null;
+  const target_armor_class = parseInt(document.getElementById("attack-target-ac").value, 10) || 10;
+  const advantage_state = document.getElementById("attack-advantage").value || "normal";
+  const roll_expression = document.getElementById("attack-roll-expression").value.trim() || "d20";
+  const damage_roll_expression = document.getElementById("attack-damage-roll").value.trim() || "1d6";
+  const damage_modifier = parseInt(document.getElementById("attack-damage-modifier").value, 10) || 0;
+  const damage_type = document.getElementById("attack-damage-type").value.trim();
+  const range_feet_raw = document.getElementById("attack-range-feet").value.trim();
+  const target_distance_raw = document.getElementById("attack-target-distance").value.trim();
+  const range_feet = range_feet_raw ? parseInt(range_feet_raw, 10) : null;
+  const target_distance_feet = target_distance_raw ? parseInt(target_distance_raw, 10) : null;
+  const reason = document.getElementById("attack-reason").value.trim();
+  const action_cost = document.getElementById("attack-action-cost").value || "action";
+  const resource_costs = parseResourceCosts(document.getElementById("attack-resource-costs").value);
+  const narrateOutcome = document.getElementById("attack-narrate-outcome").checked;
+  const submitBtn = document.getElementById("resolve-attack-submit");
+
+  if (!source) {
+    showError("Attack source is required.");
+    return;
+  }
+
+  submitBtn.disabled = true;
+  submitBtn.textContent = "Resolving...";
+  try {
+    const res = await fetch(`/api/campaigns/${CAMPAIGN_ID}/attacks/resolve`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        source,
+        target_armor_class,
+        target_participant_id,
+        advantage_state,
+        roll_expression,
+        damage_roll_expression,
+        damage_modifier,
+        damage_type,
+        range_feet,
+        target_distance_feet,
+        action_cost,
+        reason,
+        resource_costs,
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+
+    if (data.attack) {
+      appendDiceRoll(`${source} attack`, data.attack.dice_rolls || [], data.attack.modifier || 0, data.attack.total || 0);
+    }
+    if (data.damage) {
+      appendDiceRoll(`${source} damage`, data.damage.dice_rolls || [], data.damage.modifier || 0, data.damage.total || 0);
+    }
+    if (data.encounter) _activeEncounter = data.encounter;
+    await refreshActionLogs();
+    renderSidebar();
+    closeModal("resolve-attack-modal");
+    const resultText = data.attack?.hit
+      ? `${source} hit AC ${target_armor_class}${data.damage ? ` for ${data.damage.total} ${data.damage.damage_type || "damage"}` : ""}.`
+      : `${source} missed AC ${target_armor_class}.`;
+    showToast(resultText, data.attack?.hit ? "success" : "info");
+    if (narrateOutcome) {
+      await streamMechanicsFollowup(
+        `Resolved attack: ${resultText} Narrate the immediate effect in the scene, including what the target and surroundings do next.`
+      );
+    }
+  } catch (e) {
+    showError(`Could not resolve attack: ${e.message}`);
+  } finally {
+    submitBtn.disabled = false;
+    submitBtn.textContent = "Resolve";
+  }
+}
+
+async function submitResolveHealing() {
+  const source = document.getElementById("healing-source").value.trim() || "healing";
+  const target_participant_id = document.getElementById("healing-target-participant").value || null;
+  const roll_expression = document.getElementById("healing-roll-expression").value.trim() || "1d4";
+  const modifier = parseInt(document.getElementById("healing-modifier").value, 10) || 0;
+  const range_feet_raw = document.getElementById("healing-range-feet").value.trim();
+  const target_distance_raw = document.getElementById("healing-target-distance").value.trim();
+  const range_feet = range_feet_raw ? parseInt(range_feet_raw, 10) : null;
+  const target_distance_feet = target_distance_raw ? parseInt(target_distance_raw, 10) : null;
+  const apply_to_sheet = document.getElementById("healing-apply-to-sheet").checked;
+  const reason = document.getElementById("healing-reason").value.trim();
+  const action_cost = document.getElementById("healing-action-cost").value || "action";
+  const resource_costs = parseResourceCosts(document.getElementById("healing-resource-costs").value);
+  const narrateOutcome = document.getElementById("healing-narrate-outcome").checked;
+  const submitBtn = document.getElementById("resolve-healing-submit");
+
+  submitBtn.disabled = true;
+  submitBtn.textContent = "Resolving...";
+  try {
+    const res = await fetch(`/api/campaigns/${CAMPAIGN_ID}/healing/resolve`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        source,
+        roll_expression,
+        modifier,
+        apply_to_sheet: target_participant_id ? false : apply_to_sheet,
+        target_participant_id,
+        range_feet,
+        target_distance_feet,
+        action_cost,
+        reason,
+        resource_costs,
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+
+    if (data.healing) {
+      appendDiceRoll(`${source} healing`, data.healing.dice_rolls || [], data.healing.modifier || 0, data.healing.total || 0);
+    }
+    if (data.sheet) _sheet = data.sheet;
+    if (data.encounter) _activeEncounter = data.encounter;
+    await refreshActionLogs();
+    renderSidebar();
+    closeModal("resolve-healing-modal");
+    const resultText = data.summary || `${source} restored ${data.healing?.total || 0} HP.`;
+    showToast(resultText, "success");
+    if (narrateOutcome) {
+      await streamMechanicsFollowup(
+        `Resolved healing: ${resultText} Narrate the visible recovery, reactions, and the immediate shift in momentum.`
+      );
+    }
+  } catch (e) {
+    showError(`Could not resolve healing: ${e.message}`);
+  } finally {
+    submitBtn.disabled = false;
+    submitBtn.textContent = "Resolve";
+  }
+}
+
+async function submitResolveContestedCheck() {
+  const actor_source = document.getElementById("contested-actor-source").value.trim();
+  const opponent_source = document.getElementById("contested-opponent-source").value.trim();
+  const opponent_owner_id = document.getElementById("contested-opponent-owner-id").value || "";
+  const opponent_name = document.getElementById("contested-opponent-name").value.trim() || "Opponent";
+  const opponent_modifier = parseInt(document.getElementById("contested-opponent-modifier").value, 10) || 0;
+  const roll_expression = document.getElementById("contested-roll-expression").value.trim() || "d20";
+  const actor_advantage_state = document.getElementById("contested-actor-advantage").value || "normal";
+  const opponent_advantage_state = document.getElementById("contested-opponent-advantage").value || "normal";
+  const reason = document.getElementById("contested-reason").value.trim();
+  const action_cost = document.getElementById("contested-action-cost").value || "action";
+  const resource_costs = parseResourceCosts(document.getElementById("contested-resource-costs").value);
+  const narrateOutcome = document.getElementById("contested-narrate-outcome").checked;
+  const submitBtn = document.getElementById("resolve-contested-submit");
+
+  if (!actor_source || !opponent_source) {
+    showError("Both player and opponent sources are required.");
+    return;
+  }
+
+  submitBtn.disabled = true;
+  submitBtn.textContent = "Resolving...";
+  try {
+    const payload = {
+      actor_source,
+      opponent_source,
+      opponent_owner_type: opponent_owner_id ? "npc" : null,
+      opponent_owner_id: opponent_owner_id || null,
+      opponent_name,
+      opponent_modifier: opponent_owner_id ? null : opponent_modifier,
+      roll_expression,
+      actor_advantage_state,
+      opponent_advantage_state,
+      action_cost,
+      reason,
+      resource_costs,
+    };
+    const res = await fetch(`/api/campaigns/${CAMPAIGN_ID}/contested-checks/resolve`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+
+    appendDiceRoll(`${data.actor?.name || "Player"} ${actor_source}`, data.actor?.dice_rolls || [], data.actor?.modifier || 0, data.actor?.total || 0);
+    appendDiceRoll(`${data.opponent?.name || opponent_name} ${opponent_source}`, data.opponent?.dice_rolls || [], data.opponent?.modifier || 0, data.opponent?.total || 0);
+    if (data.encounter) _activeEncounter = data.encounter;
+    await refreshActionLogs();
+    renderSidebar();
+    closeModal("resolve-contested-check-modal");
+    const winnerName = data.winner === "actor"
+      ? data.actor?.name || "Player"
+      : data.winner === "opponent"
+        ? data.opponent?.name || opponent_name
+        : "No one";
+    const resultText = data.winner === "tie"
+      ? "Contested check tied."
+      : `${winnerName} won by ${data.margin || 0}.`;
+    showToast(
+      resultText,
+      data.winner === "actor" ? "success" : "info"
+    );
+    if (narrateOutcome) {
+      await streamMechanicsFollowup(
+        `Resolved contested check: ${data.actor?.name || "Player"} rolled ${data.actor?.total || 0} and ${data.opponent?.name || opponent_name} rolled ${data.opponent?.total || 0}. ${resultText} Narrate the immediate struggle and consequence.`
+      );
+    }
+  } catch (e) {
+    showError(`Could not resolve contested check: ${e.message}`);
   } finally {
     submitBtn.disabled = false;
     submitBtn.textContent = "Resolve";
@@ -1620,9 +3674,122 @@ async function refreshActionLogs() {
     const res = await fetch(`/api/campaigns/${CAMPAIGN_ID}/action-logs?n=20`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     _actionLogs = await res.json();
+    await refreshRuleAudits({ quiet: true });
+    await refreshCampaignRecap();
   } catch (e) {
     showError(`Could not refresh action log: ${e.message}`);
   }
+}
+
+async function refreshRuleAudits(options = {}) {
+  const quiet = options.quiet === true;
+  try {
+    const res = await fetch(`/api/campaigns/${CAMPAIGN_ID}/rule-audits?n=20`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    _ruleAudits = await res.json();
+    renderRuleAuditSidebar();
+  } catch (e) {
+    if (!quiet) showError(`Could not refresh rule audits: ${e.message}`);
+  }
+}
+
+function renderRuleAuditSidebar() {
+  const section = document.getElementById("rule-audit-section");
+  const container = document.getElementById("sidebar-rule-audit");
+  if (!section || !container) return;
+
+  const isRulesMode = isD20RulesMode();
+  section.style.display = isRulesMode ? "" : "none";
+  if (!isRulesMode) return;
+
+  const audits = (_ruleAudits || []).slice(0, 8);
+  if (!audits.length) {
+    container.innerHTML = '<div class="gm-empty">No rule audits yet.</div>';
+    return;
+  }
+
+  container.innerHTML = audits.map(audit => {
+    const summary = buildRuleAuditSummary(audit);
+    const why = buildRuleAuditWhy(audit);
+    const time = formatRelativeAuditTime(audit.created_at);
+    return `
+      <div class="sidebar-item">
+        <div class="sidebar-item-name">${escHtml(String(audit.event_type || "audit").replaceAll("_", " "))}</div>
+        <div class="sidebar-item-sub">${escHtml(summary)}</div>
+        ${why ? `<div class="sidebar-item-sub muted">${escHtml(why)}</div>` : ""}
+        <div class="sidebar-item-sub muted">${escHtml([audit.actor_name || "GM", audit.source || "", time].filter(Boolean).join(" · "))}</div>
+      </div>
+    `;
+  }).join("");
+}
+
+function buildRuleAuditSummary(audit) {
+  const payload = audit.payload || {};
+  if (audit.event_type === "attack") {
+    const attack = payload.attack || {};
+    const damage = payload.damage || {};
+    const damagePart = damage.total ? ` for ${damage.total} ${damage.damage_type || "damage"}` : "";
+    return `${attack.total ?? "?"} vs AC ${attack.target_armor_class ?? "?"}${damagePart}`;
+  }
+  if (audit.event_type === "healing") {
+    const healing = payload.healing || {};
+    return `Restored ${healing.total ?? "?"} HP from ${healing.source || audit.source || "healing"}.`;
+  }
+  if (audit.event_type === "check") {
+    const resolution = payload.resolution || {};
+    return `${resolution.total ?? "?"} vs DC ${resolution.difficulty ?? "?"} on ${resolution.source || audit.source || "check"}.`;
+  }
+  if (audit.event_type === "contested_check") {
+    const resolution = payload.resolution || {};
+    return `${resolution.actor?.name || "Actor"} ${resolution.actor?.total ?? "?"} vs ${resolution.opponent?.name || "Opponent"} ${resolution.opponent?.total ?? "?"}.`;
+  }
+  if (audit.event_type === "gm_decision") {
+    const passive = (payload.passive_sources || []).join(", ");
+    return passive ? `GM decided on ${payload.resolution_kind || "rules"} using passive ${passive}.` : `GM decided on ${payload.resolution_kind || "rules"} handoff.`;
+  }
+  if (audit.event_type === "gm_decision_error") {
+    return "Hidden GM decision block was malformed; fallback guidance was used.";
+  }
+  if (audit.event_type === "compendium_action") {
+    return `${payload.entry?.name || audit.source || "Compendium action"} resolved directly.`;
+  }
+  if (audit.event_type === "campaign_procedure") {
+    return payload.world_time?.label ? `Procedure advanced to ${payload.world_time.label}.` : (audit.reason || "Campaign procedure resolved.");
+  }
+  return audit.reason || audit.source || "Rule audit recorded.";
+}
+
+function buildRuleAuditWhy(audit) {
+  const payload = audit.payload || {};
+  if (audit.event_type === "gm_decision") {
+    const extras = [];
+    if (payload._fallback_preview) extras.push("fallback preview");
+    if (payload._contract_parse_error) extras.push("invalid hidden contract");
+    if (payload.passive_sources?.length) extras.push(`passive ${payload.passive_sources.join("/")}`);
+    return extras.join(" · ");
+  }
+  if (audit.event_type === "gm_decision_error") {
+    return payload.contract_parse_error || "Could not parse GM contract JSON.";
+  }
+  if (audit.event_type === "attack") {
+    const attack = payload.attack || {};
+    if (attack.outcome) return String(attack.outcome).replaceAll("_", " ");
+  }
+  if (audit.event_type === "check") {
+    const resolution = payload.resolution || {};
+    const parts = [];
+    if (resolution.advantage_state && resolution.advantage_state !== "normal") parts.push(resolution.advantage_state);
+    if (resolution.outcome) parts.push(String(resolution.outcome).replaceAll("_", " "));
+    return parts.join(" · ");
+  }
+  if (audit.event_type === "campaign_procedure") {
+    const rewards = Object.entries(payload.reward_currencies || {})
+      .filter(([, amount]) => Number(amount) > 0)
+      .map(([denomination, amount]) => `${amount} ${denomination}`)
+      .join(", ");
+    return rewards ? `reward: ${rewards}` : "";
+  }
+  return "";
 }
 
 function splitCsv(raw) {
@@ -1630,6 +3797,27 @@ function splitCsv(raw) {
     .split(",")
     .map(part => part.trim())
     .filter(Boolean);
+}
+
+function parseResourceCosts(raw) {
+  const costs = {};
+  if (!raw.trim()) return costs;
+  for (const entry of raw.split(",")) {
+    const part = entry.trim();
+    if (!part) continue;
+    const [name, amount] = part.split(":").map(value => value.trim());
+    const parsed = parseInt(amount, 10);
+    if (name && Number.isFinite(parsed)) {
+      costs[name] = parsed;
+    }
+  }
+  return costs;
+}
+
+function formatResourceCosts(costs) {
+  return Object.entries(costs || {})
+    .map(([key, value]) => `${key}:${value}`)
+    .join(", ");
 }
 
 // ── Scene search ──────────────────────────────────────────────────────────────
@@ -1768,6 +3956,7 @@ function setupInput() {
   input.addEventListener("input", () => {
     input.style.height = "auto";
     input.style.height = Math.min(input.scrollHeight, 200) + "px";
+    scheduleGMProcedurePreview();
   });
 
   // Global keyboard shortcuts

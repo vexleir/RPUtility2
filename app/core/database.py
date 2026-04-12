@@ -517,6 +517,10 @@ def _migrate(conn: sqlite3.Connection) -> None:
             armor_class         INTEGER NOT NULL DEFAULT 10,
             speed               INTEGER NOT NULL DEFAULT 30,
             currencies          TEXT NOT NULL DEFAULT '{}',
+            resource_pools      TEXT NOT NULL DEFAULT '{}',
+            prepared_spells     TEXT NOT NULL DEFAULT '[]',
+            equipped_items      TEXT NOT NULL DEFAULT '{}',
+            item_charges        TEXT NOT NULL DEFAULT '{}',
             conditions          TEXT NOT NULL DEFAULT '[]',
             notes               TEXT NOT NULL DEFAULT '',
             created_at          TEXT NOT NULL,
@@ -524,6 +528,23 @@ def _migrate(conn: sqlite3.Connection) -> None:
             UNIQUE(campaign_id, owner_type, owner_id)
         )
     """)
+
+    try:
+        conn.execute("ALTER TABLE character_sheets ADD COLUMN resource_pools TEXT NOT NULL DEFAULT '{}'")
+    except Exception:
+        pass
+    try:
+        conn.execute("ALTER TABLE character_sheets ADD COLUMN prepared_spells TEXT NOT NULL DEFAULT '[]'")
+    except Exception:
+        pass
+    try:
+        conn.execute("ALTER TABLE character_sheets ADD COLUMN equipped_items TEXT NOT NULL DEFAULT '{}'")
+    except Exception:
+        pass
+    try:
+        conn.execute("ALTER TABLE character_sheets ADD COLUMN item_charges TEXT NOT NULL DEFAULT '{}'")
+    except Exception:
+        pass
 
     conn.execute("""
         CREATE TABLE IF NOT EXISTS action_logs (
@@ -536,6 +557,37 @@ def _migrate(conn: sqlite3.Connection) -> None:
             summary         TEXT NOT NULL DEFAULT '',
             details         TEXT NOT NULL DEFAULT '{}',
             created_at      TEXT NOT NULL
+        )
+    """)
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS rule_audit_events (
+            id              TEXT PRIMARY KEY,
+            campaign_id     TEXT NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+            scene_id        TEXT,
+            event_type      TEXT NOT NULL DEFAULT 'check',
+            actor_name      TEXT NOT NULL DEFAULT 'Player',
+            source          TEXT NOT NULL DEFAULT '',
+            reason          TEXT NOT NULL DEFAULT '',
+            payload         TEXT NOT NULL DEFAULT '{}',
+            created_at      TEXT NOT NULL
+        )
+    """)
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS encounters (
+            id                  TEXT PRIMARY KEY,
+            campaign_id         TEXT NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+            scene_id            TEXT,
+            name                TEXT NOT NULL DEFAULT 'Encounter',
+            status              TEXT NOT NULL DEFAULT 'active',
+            round_number        INTEGER NOT NULL DEFAULT 1,
+            current_turn_index  INTEGER NOT NULL DEFAULT 0,
+            participants        TEXT NOT NULL DEFAULT '[]',
+            encounter_log       TEXT NOT NULL DEFAULT '[]',
+            summary             TEXT NOT NULL DEFAULT '',
+            created_at          TEXT NOT NULL,
+            updated_at          TEXT NOT NULL
         )
     """)
 
@@ -687,6 +739,129 @@ def _migrate(conn: sqlite3.Connection) -> None:
             updated_at  TEXT NOT NULL
         )
     """)
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS campaign_objectives (
+            id          TEXT PRIMARY KEY,
+            campaign_id TEXT NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+            title       TEXT NOT NULL,
+            description TEXT NOT NULL DEFAULT '',
+            status      TEXT NOT NULL DEFAULT 'active',
+            created_at  TEXT NOT NULL,
+            updated_at  TEXT NOT NULL
+        )
+    """)
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS campaign_quests (
+            id              TEXT PRIMARY KEY,
+            campaign_id     TEXT NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+            title           TEXT NOT NULL,
+            description     TEXT NOT NULL DEFAULT '',
+            status          TEXT NOT NULL DEFAULT 'active',
+            giver_npc_name  TEXT NOT NULL DEFAULT '',
+            location_name   TEXT NOT NULL DEFAULT '',
+            reward_notes    TEXT NOT NULL DEFAULT '',
+            importance      TEXT NOT NULL DEFAULT 'medium',
+            stages          TEXT NOT NULL DEFAULT '[]',
+            tags            TEXT NOT NULL DEFAULT '[]',
+            created_at      TEXT NOT NULL,
+            updated_at      TEXT NOT NULL
+        )
+    """)
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS campaign_events (
+            id                  TEXT PRIMARY KEY,
+            campaign_id         TEXT NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+            event_type          TEXT NOT NULL DEFAULT 'world',
+            title               TEXT NOT NULL,
+            content             TEXT NOT NULL DEFAULT '',
+            details             TEXT NOT NULL DEFAULT '{}',
+            world_time_hours    INTEGER NOT NULL DEFAULT 0,
+            status              TEXT NOT NULL DEFAULT 'pending',
+            created_at          TEXT NOT NULL,
+            updated_at          TEXT NOT NULL
+        )
+    """)
+
+    # Fresh-DB compatibility: some additive columns were historically added
+    # before the base campaign tables were created, so ensure they exist here too.
+    for col_def in [
+        "notes TEXT NOT NULL DEFAULT ''",
+        "cover_image TEXT",
+        "gen_settings TEXT NOT NULL DEFAULT '{}'",
+        "summary_model_name TEXT",
+        "world_time_hours INTEGER NOT NULL DEFAULT 0",
+    ]:
+        try:
+            conn.execute(f"ALTER TABLE campaigns ADD COLUMN {col_def}")
+        except Exception:
+            pass
+
+    for col_def in [
+        "dev_log TEXT NOT NULL DEFAULT '[]'",
+        "portrait_image TEXT",
+    ]:
+        try:
+            conn.execute(f"ALTER TABLE player_characters ADD COLUMN {col_def}")
+        except Exception:
+            pass
+
+    for col_def in [
+        "category TEXT NOT NULL DEFAULT ''",
+        "priority TEXT NOT NULL DEFAULT 'normal'",
+        "trigger_keywords TEXT NOT NULL DEFAULT '[]'",
+    ]:
+        try:
+            conn.execute(f"ALTER TABLE campaign_world_facts ADD COLUMN {col_def}")
+        except Exception:
+            pass
+
+    for col_def in [
+        "status TEXT NOT NULL DEFAULT 'active'",
+        "status_reason TEXT NOT NULL DEFAULT ''",
+        "secrets TEXT NOT NULL DEFAULT ''",
+        "short_term_goal TEXT NOT NULL DEFAULT ''",
+        "long_term_goal TEXT NOT NULL DEFAULT ''",
+        "dev_log TEXT NOT NULL DEFAULT '[]'",
+        "portrait_image TEXT",
+        "gender TEXT NOT NULL DEFAULT ''",
+        "age TEXT NOT NULL DEFAULT ''",
+        "history_with_player TEXT NOT NULL DEFAULT ''",
+        "forms TEXT NOT NULL DEFAULT '[]'",
+        "active_form TEXT",
+    ]:
+        try:
+            conn.execute(f"ALTER TABLE npc_cards ADD COLUMN {col_def}")
+        except Exception:
+            pass
+
+    for col_def in [
+        "allow_unselected_npcs INTEGER NOT NULL DEFAULT 0",
+        "scene_image TEXT",
+    ]:
+        try:
+            conn.execute(f"ALTER TABLE campaign_scenes ADD COLUMN {col_def}")
+        except Exception:
+            pass
+
+    for col_def in [
+        "standing_with_player TEXT NOT NULL DEFAULT ''",
+        "relationship_notes TEXT NOT NULL DEFAULT ''",
+    ]:
+        try:
+            conn.execute(f"ALTER TABLE campaign_factions ADD COLUMN {col_def}")
+        except Exception:
+            pass
+
+    for col_def in [
+        "details TEXT NOT NULL DEFAULT '{}'",
+    ]:
+        try:
+            conn.execute(f"ALTER TABLE campaign_events ADD COLUMN {col_def}")
+        except Exception:
+            pass
 
 
 def _create_tables(conn: sqlite3.Connection) -> None:

@@ -1,0 +1,25 @@
+{
+  "id": "c3e10cfa-d03f-4cd3-8891-4eeab034736e",
+  "slug": "healing-word",
+  "name": "Healing Word",
+  "category": "spell",
+  "system_pack": "d20-fantasy-core",
+  "description": "A quick healing spell.",
+  "rules_text": "Restore a small amount of HP at range.",
+  "tags": [],
+  "action_cost": "bonus_action",
+  "range_feet": 60,
+  "roll_expression": "",
+  "modifier": 0,
+  "equipment_slot": "",
+  "armor_class_bonus": 0,
+  "charges_max": 0,
+  "restores_on": "",
+  "resource_costs": {
+    "spell_slot_1": 1
+  },
+  "applies_conditions": [],
+  "is_builtin": false,
+  "created_at": "2026-04-11T00:45:11.014370+00:00",
+  "updated_at": "2026-04-11T00:45:11.014371+00:00"
+}

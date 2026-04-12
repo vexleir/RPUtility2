@@ -188,12 +188,106 @@
       <div class="sidebar-section" id="rules-sheet-section">
         <div class="sidebar-section-title" style="display:flex;justify-content:space-between;align-items:center">
           <span>Rules Sheet</span>
-          <div style="display:flex;gap:6px;align-items:center">
+          <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end">
+            <button class="btn btn-ghost btn-sm" id="advance-time-btn" onclick="openAdvanceTimePrompt()">Advance Time</button>
+            <button class="btn btn-ghost btn-sm" id="short-rest-btn" onclick="takeCharacterRest('short_rest')">Short Rest</button>
+            <button class="btn btn-ghost btn-sm" id="long-rest-btn" onclick="takeCharacterRest('long_rest')">Long Rest</button>
             <button class="btn btn-ghost btn-sm" id="sheet-state-btn" onclick="openSheetStateModal()">Update State</button>
             <button class="btn btn-ghost btn-sm" id="resolve-check-btn" onclick="openResolveCheckModal()">Resolve Check</button>
           </div>
         </div>
         <div id="sidebar-sheet" class="sidebar-content"></div>
+      </div>
+
+      <div class="sidebar-section" id="adventure-section">
+        <div class="sidebar-section-title" style="display:flex;justify-content:space-between;align-items:center">
+          <span>Adventure Log</span>
+          <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end">
+            <button class="btn btn-ghost btn-sm" id="add-objective-btn" onclick="addCampaignObjective()">Add Objective</button>
+            <button class="btn btn-ghost btn-sm" id="add-quest-btn" onclick="addCampaignQuest()">Add Quest</button>
+            <button class="btn btn-ghost btn-sm" id="add-event-btn" onclick="addCampaignEvent()">Add Event</button>
+            <button class="btn btn-ghost btn-sm" id="run-downtime-btn" onclick="openDowntimePrompt()">Downtime</button>
+            <button class="btn btn-ghost btn-sm" id="advance-quest-btn" onclick="advanceCampaignQuest()">Advance Quest</button>
+            <button class="btn btn-ghost btn-sm" id="generate-treasure-btn" onclick="generateTreasureReward()">Treasure</button>
+          </div>
+        </div>
+        <div id="sidebar-adventure" class="sidebar-content"></div>
+      </div>
+
+      <div class="sidebar-section" id="recap-section">
+        <div class="sidebar-section-title" style="display:flex;justify-content:space-between;align-items:center">
+          <span>Campaign Recap</span>
+          <div style="display:flex;gap:6px;align-items:center">
+            <select id="recap-filter" class="wb-field" onchange="refreshCampaignRecap(); renderSidebar();" style="min-width:110px;padding:4px 8px">
+              <option value="all">All</option>
+              <option value="event">Events</option>
+              <option value="mechanic">Mechanics</option>
+              <option value="chronicle">Chronicle</option>
+            </select>
+            <button class="btn btn-ghost btn-sm" onclick="refreshActionLogs()">Refresh</button>
+          </div>
+        </div>
+        <div id="sidebar-recap" class="sidebar-content"></div>
+      </div>
+
+      <div class="sidebar-section" id="compendium-section">
+        <div class="sidebar-section-title">Compendium</div>
+        <div class="sidebar-content">
+          <input
+            type="text"
+            id="compendium-search"
+            class="wb-field"
+            placeholder="Search actions, spells, conditions..."
+            oninput="scheduleCompendiumRefresh()"
+            style="margin-bottom:8px"
+          >
+          <select id="compendium-category" class="wb-field" onchange="refreshCompendiumSidebar()" style="margin-bottom:8px">
+            <option value="">All Categories</option>
+            <option value="action">Actions</option>
+            <option value="spell">Spells</option>
+            <option value="condition">Conditions</option>
+            <option value="item">Items</option>
+            <option value="weapon">Weapons</option>
+            <option value="armor">Armor</option>
+            <option value="monster">Monsters</option>
+          </select>
+          <div id="sidebar-compendium"></div>
+        </div>
+      </div>
+
+      <div class="sidebar-section" id="gm-procedure-section">
+        <div class="sidebar-section-title" style="display:flex;justify-content:space-between;align-items:center">
+          <span>GM Procedure</span>
+          <div style="display:flex;gap:6px;align-items:center">
+            <button class="btn btn-ghost btn-sm" id="gm-procedure-preview-btn" onclick="previewCurrentIntent()">Preview Intent</button>
+          </div>
+        </div>
+        <div id="sidebar-gm-procedure" class="sidebar-content"></div>
+      </div>
+
+      <div class="sidebar-section" id="encounter-section">
+        <div class="sidebar-section-title" style="display:flex;justify-content:space-between;align-items:center">
+          <span>Encounter</span>
+          <div style="display:flex;gap:6px;align-items:center">
+            <button class="btn btn-ghost btn-sm" id="encounter-start-btn" onclick="startSceneEncounter()">Start</button>
+            <button class="btn btn-ghost btn-sm" id="encounter-move-btn" onclick="spendEncounterMovement()">Move</button>
+            <button class="btn btn-ghost btn-sm" id="encounter-react-btn" onclick="useEncounterReaction()">React</button>
+            <button class="btn btn-ghost btn-sm" id="encounter-condition-btn" onclick="applyEncounterCondition()">Condition</button>
+            <button class="btn btn-ghost btn-sm" id="encounter-concentration-btn" onclick="toggleEncounterConcentration()">Concentrate</button>
+            <button class="btn btn-ghost btn-sm" id="encounter-stabilize-btn" onclick="stabilizeEncounterParticipant()">Stabilize</button>
+            <button class="btn btn-ghost btn-sm" id="encounter-advance-btn" onclick="advanceEncounterTurn()">Next Turn</button>
+            <button class="btn btn-ghost btn-sm" id="encounter-complete-btn" onclick="completeActiveEncounter()">End</button>
+          </div>
+        </div>
+        <div id="sidebar-encounter" class="sidebar-content"></div>
+      </div>
+
+      <div class="sidebar-section" id="rule-audit-section">
+        <div class="sidebar-section-title" style="display:flex;justify-content:space-between;align-items:center">
+          <span>Rule Audit</span>
+          <button class="btn btn-ghost btn-sm" onclick="refreshRuleAudits()">Refresh</button>
+        </div>
+        <div id="sidebar-rule-audit" class="sidebar-content"></div>
       </div>
 
       <!-- Action log -->
@@ -356,11 +450,309 @@
           <label>Reason <span class="dim">(optional)</span></label>
           <textarea id="check-reason" class="wb-field" rows="3" placeholder="e.g. Sneaking past the ruined gatehouse sentries"></textarea>
         </div>
+        <div class="form-group">
+          <label>Action Cost</label>
+          <select id="check-action-cost" class="wb-field">
+            <option value="action">Action</option>
+            <option value="bonus_action">Bonus Action</option>
+            <option value="free">Free</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;text-transform:none;letter-spacing:normal">
+            <input type="checkbox" id="check-narrate-outcome" checked>
+            <span>Narrate the resolved outcome immediately after rolling</span>
+          </label>
+        </div>
         <div id="resolve-check-preview" class="muted" style="font-size:0.84rem"></div>
       </div>
       <div class="modal-footer">
         <button class="btn btn-primary" id="resolve-check-submit" onclick="submitResolveCheck()">Resolve</button>
         <button class="btn" onclick="closeModal('resolve-check-modal')">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="resolve-attack-modal" class="modal-backdrop hidden">
+    <div class="modal" style="max-width:560px">
+      <div class="modal-header">
+        <span>Resolve Attack</span>
+        <button class="modal-close" onclick="closeModal('resolve-attack-modal')">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="muted" style="margin-bottom:12px">
+          Resolve an attack roll and optional damage using the deterministic rules engine.
+        </p>
+        <div class="wb-grid-2">
+          <div class="form-group">
+            <label>Attack Source</label>
+            <input type="text" id="attack-source" class="wb-field" placeholder="e.g. longsword, shortbow, spell attack">
+          </div>
+          <div class="form-group">
+            <label>Encounter Target <span class="dim">(optional)</span></label>
+            <select id="attack-target-participant" class="wb-field" onchange="updateAttackTargetPreview()">
+              <option value="">No encounter target</option>
+            </select>
+          </div>
+        </div>
+        <div class="wb-grid-2">
+          <div class="form-group">
+            <label>Target Armor Class</label>
+            <input type="number" id="attack-target-ac" class="wb-field" min="0" value="10">
+          </div>
+          <div class="form-group">
+            <label>Attack Preview</label>
+            <div id="attack-target-preview" class="muted" style="padding-top:10px"></div>
+          </div>
+        </div>
+        <div class="wb-grid-2">
+          <div class="form-group">
+            <label>Advantage State</label>
+            <select id="attack-advantage" class="wb-field">
+              <option value="normal">Normal</option>
+              <option value="advantage">Advantage</option>
+              <option value="disadvantage">Disadvantage</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Attack Roll Expression</label>
+            <input type="text" id="attack-roll-expression" class="wb-field" value="d20" placeholder="d20">
+          </div>
+        </div>
+        <div class="wb-grid-2">
+          <div class="form-group">
+            <label>Damage Roll</label>
+            <input type="text" id="attack-damage-roll" class="wb-field" value="1d6" placeholder="1d8">
+          </div>
+          <div class="form-group">
+            <label>Damage Modifier</label>
+            <input type="number" id="attack-damage-modifier" class="wb-field" value="0">
+          </div>
+        </div>
+        <div class="wb-grid-2">
+          <div class="form-group">
+            <label>Damage Type <span class="dim">(optional)</span></label>
+            <input type="text" id="attack-damage-type" class="wb-field" placeholder="e.g. slashing, fire">
+          </div>
+          <div class="form-group">
+            <label>Resource Costs <span class="dim">(optional)</span></label>
+            <input type="text" id="attack-resource-costs" class="wb-field" placeholder="e.g. superiority_die:1, spell_slot_1:1">
+          </div>
+        </div>
+        <div class="wb-grid-2">
+          <div class="form-group">
+            <label>Range Feet <span class="dim">(optional)</span></label>
+            <input type="number" id="attack-range-feet" class="wb-field" min="0" placeholder="e.g. 5, 30, 120">
+          </div>
+          <div class="form-group">
+            <label>Target Distance <span class="dim">(optional)</span></label>
+            <input type="number" id="attack-target-distance" class="wb-field" min="0" placeholder="e.g. 10">
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Reason <span class="dim">(optional)</span></label>
+          <textarea id="attack-reason" class="wb-field" rows="3" placeholder="e.g. Lunging at the cultist before they finish the chant"></textarea>
+        </div>
+        <div class="form-group">
+          <label>Action Cost</label>
+          <select id="attack-action-cost" class="wb-field">
+            <option value="action">Action</option>
+            <option value="bonus_action">Bonus Action</option>
+            <option value="free">Free</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;text-transform:none;letter-spacing:normal">
+            <input type="checkbox" id="attack-narrate-outcome" checked>
+            <span>Narrate the resolved outcome immediately after rolling</span>
+          </label>
+        </div>
+        <div id="resolve-attack-preview" class="muted" style="font-size:0.84rem"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-primary" id="resolve-attack-submit" onclick="submitResolveAttack()">Resolve</button>
+        <button class="btn" onclick="closeModal('resolve-attack-modal')">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="resolve-healing-modal" class="modal-backdrop hidden">
+    <div class="modal" style="max-width:520px">
+      <div class="modal-header">
+        <span>Resolve Healing</span>
+        <button class="modal-close" onclick="closeModal('resolve-healing-modal')">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="muted" style="margin-bottom:12px">
+          Resolve a healing roll and optionally apply it to the active player sheet.
+        </p>
+        <div class="wb-grid-2">
+          <div class="form-group">
+            <label>Healing Source</label>
+            <input type="text" id="healing-source" class="wb-field" value="healing" placeholder="e.g. cure wounds, second wind">
+          </div>
+          <div class="form-group">
+            <label>Encounter Target <span class="dim">(optional)</span></label>
+            <select id="healing-target-participant" class="wb-field" onchange="updateHealingTargetPreview()">
+              <option value="">Active player sheet</option>
+            </select>
+          </div>
+        </div>
+        <div class="wb-grid-2">
+          <div class="form-group">
+            <label>Roll Expression</label>
+            <input type="text" id="healing-roll-expression" class="wb-field" value="1d4" placeholder="1d8">
+          </div>
+          <div class="form-group">
+            <label>Healing Preview</label>
+            <div id="healing-target-preview" class="muted" style="padding-top:10px"></div>
+          </div>
+        </div>
+        <div class="wb-grid-2">
+          <div class="form-group">
+            <label>Modifier</label>
+            <input type="number" id="healing-modifier" class="wb-field" value="0">
+          </div>
+          <div class="form-group">
+            <label>Resource Costs <span class="dim">(optional)</span></label>
+            <input type="text" id="healing-resource-costs" class="wb-field" placeholder="e.g. spell_slot_2:1">
+          </div>
+        </div>
+        <div class="wb-grid-2">
+          <div class="form-group">
+            <label>Range Feet <span class="dim">(optional)</span></label>
+            <input type="number" id="healing-range-feet" class="wb-field" min="0" placeholder="e.g. 5, 30, 60">
+          </div>
+          <div class="form-group">
+            <label>Target Distance <span class="dim">(optional)</span></label>
+            <input type="number" id="healing-target-distance" class="wb-field" min="0" placeholder="e.g. 15">
+          </div>
+        </div>
+        <div class="form-group">
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;text-transform:none;letter-spacing:normal">
+            <input type="checkbox" id="healing-apply-to-sheet" checked>
+            <span>Apply the healing to the active player sheet</span>
+          </label>
+        </div>
+        <div class="form-group">
+          <label>Reason <span class="dim">(optional)</span></label>
+          <textarea id="healing-reason" class="wb-field" rows="3" placeholder="e.g. Whispering a quick prayer over the wound"></textarea>
+        </div>
+        <div class="form-group">
+          <label>Action Cost</label>
+          <select id="healing-action-cost" class="wb-field">
+            <option value="action">Action</option>
+            <option value="bonus_action">Bonus Action</option>
+            <option value="free">Free</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;text-transform:none;letter-spacing:normal">
+            <input type="checkbox" id="healing-narrate-outcome" checked>
+            <span>Narrate the resolved outcome immediately after healing</span>
+          </label>
+        </div>
+        <div id="resolve-healing-preview" class="muted" style="font-size:0.84rem"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-primary" id="resolve-healing-submit" onclick="submitResolveHealing()">Resolve</button>
+        <button class="btn" onclick="closeModal('resolve-healing-modal')">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="resolve-contested-check-modal" class="modal-backdrop hidden">
+    <div class="modal" style="max-width:600px">
+      <div class="modal-header">
+        <span>Resolve Contested Check</span>
+        <button class="modal-close" onclick="closeModal('resolve-contested-check-modal')">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="muted" style="margin-bottom:12px">
+          Resolve opposed d20 rolls between the player sheet and an NPC sheet or custom opponent.
+        </p>
+        <div class="wb-grid-2">
+          <div class="form-group">
+            <label>Player Source</label>
+            <input type="text" id="contested-actor-source" class="wb-field" placeholder="e.g. athletics, stealth">
+          </div>
+          <div class="form-group">
+            <label>Opponent Source</label>
+            <input type="text" id="contested-opponent-source" class="wb-field" placeholder="e.g. athletics, perception">
+          </div>
+        </div>
+        <div class="wb-grid-2">
+          <div class="form-group">
+            <label>Opponent NPC Sheet <span class="dim">(optional)</span></label>
+            <select id="contested-opponent-owner-id" class="wb-field" onchange="updateContestedOpponentMode()">
+              <option value="">Custom opponent / no sheet</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Opponent Name</label>
+            <input type="text" id="contested-opponent-name" class="wb-field" value="Opponent" placeholder="Opponent">
+          </div>
+        </div>
+        <div class="wb-grid-2">
+          <div class="form-group">
+            <label>Opponent Modifier <span class="dim">(custom only)</span></label>
+            <input type="number" id="contested-opponent-modifier" class="wb-field" value="0">
+          </div>
+          <div class="form-group">
+            <label>Roll Expression</label>
+            <input type="text" id="contested-roll-expression" class="wb-field" value="d20" placeholder="d20">
+          </div>
+        </div>
+        <div class="wb-grid-2">
+          <div class="form-group">
+            <label>Player Advantage</label>
+            <select id="contested-actor-advantage" class="wb-field">
+              <option value="normal">Normal</option>
+              <option value="advantage">Advantage</option>
+              <option value="disadvantage">Disadvantage</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Opponent Advantage</label>
+            <select id="contested-opponent-advantage" class="wb-field">
+              <option value="normal">Normal</option>
+              <option value="advantage">Advantage</option>
+              <option value="disadvantage">Disadvantage</option>
+            </select>
+          </div>
+        </div>
+        <div class="wb-grid-2">
+          <div class="form-group">
+            <label>Resource Costs <span class="dim">(optional)</span></label>
+            <input type="text" id="contested-resource-costs" class="wb-field" placeholder="e.g. luck:1">
+          </div>
+          <div class="form-group">
+            <label>Preview</label>
+            <div id="resolve-contested-preview" class="muted" style="padding-top:10px"></div>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Reason <span class="dim">(optional)</span></label>
+          <textarea id="contested-reason" class="wb-field" rows="3" placeholder="e.g. Wrestling the relic away before the rival escapes"></textarea>
+        </div>
+        <div class="form-group">
+          <label>Action Cost</label>
+          <select id="contested-action-cost" class="wb-field">
+            <option value="action">Action</option>
+            <option value="bonus_action">Bonus Action</option>
+            <option value="free">Free</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;text-transform:none;letter-spacing:normal">
+            <input type="checkbox" id="contested-narrate-outcome" checked>
+            <span>Narrate the resolved outcome immediately after rolling</span>
+          </label>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-primary" id="resolve-contested-submit" onclick="submitResolveContestedCheck()">Resolve</button>
+        <button class="btn" onclick="closeModal('resolve-contested-check-modal')">Cancel</button>
       </div>
     </div>
   </div>

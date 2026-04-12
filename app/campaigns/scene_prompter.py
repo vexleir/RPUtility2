@@ -11,7 +11,10 @@ from __future__ import annotations
 import re as _re
 from collections import defaultdict
 
+from app.characters.derivation import derive_sheet_state
+from app.campaigns.procedures import world_time_snapshot
 from app.core.models import PlayMode
+from app.rules.procedures.gm_flow import build_gm_procedure_guidance
 from app.rules.registry import get_system_pack, list_rulebooks
 
 # Maximum chronicle entries sent to AI. When the total exceeds this, we keep
@@ -63,9 +66,12 @@ def build_scene_messages(
     campaign,
     player_character,
     character_sheet=None,
+    recent_action_logs: list = [],
     world_facts: list,
     npcs_in_scene: list,
     active_threads: list,
+    objectives: list = [],
+    quests: list = [],
     chronicle: list = [],
     places: list = [],
     factions: list = [],
@@ -88,8 +94,8 @@ def build_scene_messages(
     recent_turns = scene.turns[-_KEYWORD_SCAN_TURNS:] if scene else []
     recent_text = " ".join(t.content.lower() for t in recent_turns) + " " + user_message.lower()
 
-    system = _build_system(campaign, player_character, character_sheet, world_facts,
-                           npcs_in_scene, active_threads, chronicle,
+    system = _build_system(campaign, player_character, character_sheet, recent_action_logs, world_facts,
+                           npcs_in_scene, active_threads, objectives, quests, chronicle,
                            places, factions, npc_relationships, scene,
                            all_world_npcs=all_world_npcs,
                            allow_unselected_npcs=allow_unselected_npcs,
@@ -130,9 +136,12 @@ def _build_system(
     campaign,
     player_character,
     character_sheet,
+    recent_action_logs: list,
     world_facts: list,
     npcs_in_scene: list,
     active_threads: list,
+    objectives: list,
+    quests: list,
     chronicle: list,
     places: list,
     factions: list,
@@ -191,7 +200,38 @@ def _build_system(
                 rule_lines.append("[CORE RULES]")
                 for section in sorted(rulebook.sections, key=lambda s: s.priority, reverse=True)[:5]:
                     rule_lines.append(f"• {section.title}: {section.content}")
+            rule_lines.append(build_gm_procedure_guidance(recent_text))
             parts.append("\n".join(rule_lines))
+
+    if campaign:
+        snapshot = world_time_snapshot(getattr(campaign, "world_time_hours", 0))
+        parts.append(f"[WORLD TIME]\n{snapshot['label']} ({snapshot['total_hours']} total hours elapsed)")
+
+    active_objectives = [objective for objective in objectives if getattr(objective, "status", "") == "active"]
+    if active_objectives:
+        objective_lines = ["[ACTIVE OBJECTIVES]"]
+        for objective in active_objectives:
+            suffix = f" — {objective.description}" if getattr(objective, "description", "") else ""
+            objective_lines.append(f"• {objective.title}{suffix}")
+        parts.append("\n".join(objective_lines))
+
+    active_quests = [quest for quest in quests if getattr(quest, "status", "") == "active"]
+    if active_quests:
+        quest_lines = ["[ACTIVE QUESTS]"]
+        for quest in active_quests:
+            progress = f" [{quest.progress_label}]" if getattr(quest, "stages", None) else ""
+            context = []
+            if getattr(quest, "giver_npc_name", ""):
+                context.append(f"giver: {quest.giver_npc_name}")
+            if getattr(quest, "location_name", ""):
+                context.append(f"location: {quest.location_name}")
+            context_text = f" ({'; '.join(context)})" if context else ""
+            description = f" — {quest.description}" if getattr(quest, "description", "") else ""
+            quest_lines.append(f"• {quest.title}{context_text}{progress}{description}")
+            for stage in sorted(getattr(quest, "stages", []), key=lambda item: item.order):
+                marker = "✓" if stage.completed else "○"
+                quest_lines.append(f"  {marker} {stage.description}")
+        parts.append("\n".join(quest_lines))
 
     # ── World facts (priority-sorted, keyword-filtered) ───────────────────────
     fact_texts = [f for f in world_facts if f.content and _fact_is_active(f, recent_text)]
@@ -275,6 +315,7 @@ def _build_system(
         parts.append("\n".join(pc_lines))
 
     if character_sheet and campaign and getattr(campaign, "play_mode", PlayMode.NARRATIVE) == PlayMode.RULES:
+        derived = derive_sheet_state(character_sheet)
         sheet_lines = [
             f"[CHARACTER SHEET: {character_sheet.name}]",
             f"Class: {character_sheet.character_class or 'Adventurer'}",
@@ -283,6 +324,9 @@ def _build_system(
             f"HP: {character_sheet.current_hp}/{character_sheet.max_hp}" + (f" (+{character_sheet.temp_hp} temp)" if character_sheet.temp_hp else ""),
             f"AC: {character_sheet.armor_class}",
             f"Speed: {character_sheet.speed}",
+            f"Proficiency Bonus: {character_sheet.proficiency_bonus:+d}",
+            f"Initiative: {derived['initiative']:+d}",
+            f"Passive Perception: {derived['passive_perception']}",
             "Abilities: " + ", ".join(
                 f"{k[:3].upper()} {v} ({character_sheet.ability_modifier(k):+d})"
                 for k, v in character_sheet.abilities.items()
@@ -296,6 +340,12 @@ def _build_system(
         if character_sheet.notes:
             sheet_lines.append(f"Notes: {character_sheet.notes}")
         parts.append("\n".join(sheet_lines))
+
+    if recent_action_logs and campaign and getattr(campaign, "play_mode", PlayMode.NARRATIVE) == PlayMode.RULES:
+        action_lines = ["[RECENT MECHANICAL OUTCOMES]"]
+        for entry in recent_action_logs[:6]:
+            action_lines.append(f"• {_format_action_log_for_prompt(entry)}")
+        parts.append("\n".join(action_lines))
 
     # ── NPCs in this scene ────────────────────────────────────────────────────
     if npcs_in_scene:
@@ -431,6 +481,53 @@ def _build_system(
         parts.append("\n".join(scene_lines))
 
     return "\n\n".join(parts)
+
+
+def _format_action_log_for_prompt(entry) -> str:
+    details = getattr(entry, "details", {}) or {}
+    action_type = getattr(entry, "action_type", "") or "action"
+    base = getattr(entry, "summary", "") or f"{getattr(entry, 'actor_name', 'Player')} performed {action_type}."
+
+    if action_type == "attack" and details.get("attack"):
+        attack = details["attack"]
+        damage = details.get("damage") or {}
+        text = (
+            f"{getattr(entry, 'actor_name', 'Player')} resolved {getattr(entry, 'source', 'attack')} "
+            f"at {attack.get('total', 0)} vs AC {attack.get('target_armor_class', 0)} "
+            f"({str(attack.get('outcome', '')).replace('_', ' ')})"
+        )
+        if damage:
+            dmg_type = damage.get("damage_type") or "damage"
+            text += f"; damage dealt: {damage.get('total', 0)} {dmg_type}"
+        return text + "."
+
+    if action_type == "healing" and details.get("healing"):
+        healing = details["healing"]
+        text = f"{getattr(entry, 'actor_name', 'Player')} resolved healing for {healing.get('total', 0)} HP"
+        sheet = details.get("sheet") or {}
+        if sheet:
+            text += f"; current HP is now {sheet.get('current_hp', 0)}/{sheet.get('max_hp', 0)}"
+        return text + "."
+
+    if action_type == "contested_check" and details.get("resolution"):
+        resolution = details["resolution"]
+        actor = resolution.get("actor") or {}
+        opponent = resolution.get("opponent") or {}
+        winner = str(resolution.get("winner", "tie")).replace("_", " ")
+        return (
+            f"{actor.get('name', 'Actor')} and {opponent.get('name', 'Opponent')} resolved a contested check: "
+            f"{actor.get('total', 0)} vs {opponent.get('total', 0)}; winner: {winner}."
+        )
+
+    if action_type == "check" and details.get("resolution"):
+        resolution = details["resolution"]
+        return (
+            f"{getattr(entry, 'actor_name', 'Player')} resolved {resolution.get('source') or getattr(entry, 'source', 'check')} "
+            f"at {resolution.get('total', 0)} vs DC {resolution.get('difficulty', 0)} "
+            f"({str(resolution.get('outcome', '')).replace('_', ' ')})."
+        )
+
+    return base
 
 
 def _get_active_form(npc):

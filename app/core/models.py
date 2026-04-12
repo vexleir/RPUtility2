@@ -604,6 +604,7 @@ class Campaign(BaseModel):
     feature_flags: dict[str, bool] = Field(default_factory=dict)
     style_guide: StyleGuide = Field(default_factory=StyleGuide)
     gen_settings: GenSettings = Field(default_factory=GenSettings)
+    world_time_hours: int = 0
     notes: str = ""                    # player scratchpad — never sent to AI
     cover_image: Optional[str] = None  # base64 data URL set via image generation
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
@@ -785,6 +786,60 @@ class CampaignFaction(BaseModel):
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
+class CampaignObjective(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    campaign_id: str
+    title: str
+    description: str = ""
+    status: ObjectiveStatus = ObjectiveStatus.ACTIVE
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class CampaignQuest(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    campaign_id: str
+    title: str
+    description: str = ""
+    status: QuestStatus = QuestStatus.ACTIVE
+    giver_npc_name: str = ""
+    location_name: str = ""
+    reward_notes: str = ""
+    importance: ImportanceLevel = ImportanceLevel.MEDIUM
+    stages: list[QuestStage] = Field(default_factory=list)
+    tags: list[str] = Field(default_factory=list)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+    @property
+    def stages_done(self) -> int:
+        return sum(1 for stage in self.stages if stage.completed)
+
+    @property
+    def progress_label(self) -> str:
+        if not self.stages:
+            return ""
+        return f"{self.stages_done}/{len(self.stages)} stages"
+
+
+class CampaignEventStatus(str, Enum):
+    PENDING = "pending"
+    RESOLVED = "resolved"
+
+
+class CampaignEvent(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    campaign_id: str
+    event_type: str = "world"
+    title: str
+    content: str = ""
+    details: dict = Field(default_factory=dict)
+    world_time_hours: int = 0
+    status: CampaignEventStatus = CampaignEventStatus.PENDING
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
 class WorldBuildResult(BaseModel):
     """Structured output from the AI world builder."""
     premise: str = ""
@@ -865,6 +920,10 @@ class CharacterSheet(BaseModel):
         "sp": 0,
         "gp": 0,
     })
+    resource_pools: dict[str, dict] = Field(default_factory=dict)
+    prepared_spells: list[str] = Field(default_factory=list)
+    equipped_items: dict[str, str] = Field(default_factory=dict)
+    item_charges: dict[str, dict] = Field(default_factory=dict)
     conditions: list[str] = Field(default_factory=list)
     notes: str = ""
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
@@ -897,6 +956,63 @@ class CheckResolution(BaseModel):
     source: str = ""
 
 
+class AttackResolution(BaseModel):
+    roll_expression: str = "d20"
+    attack_roll: int
+    dice_rolls: list[int] = Field(default_factory=list)
+    modifier: int = 0
+    total: int = 0
+    target_armor_class: int = 10
+    hit: bool = False
+    critical_hit: bool = False
+    outcome: str = "miss"
+    advantage_state: str = "normal"    # normal | advantage | disadvantage
+    reason: str = ""
+    source: str = ""
+
+
+class DamageResolution(BaseModel):
+    roll_expression: str = "1d6"
+    damage_type: str = ""
+    dice_total: int
+    dice_rolls: list[int] = Field(default_factory=list)
+    modifier: int = 0
+    total: int = 0
+    critical_hit: bool = False
+    reason: str = ""
+    source: str = ""
+
+
+class HealingResolution(BaseModel):
+    roll_expression: str = "1d4"
+    dice_total: int
+    dice_rolls: list[int] = Field(default_factory=list)
+    modifier: int = 0
+    total: int = 0
+    reason: str = ""
+    source: str = ""
+
+
+class ContestedCheckParticipant(BaseModel):
+    name: str = ""
+    source: str = ""
+    roll_expression: str = "d20"
+    dice_total: int
+    dice_rolls: list[int] = Field(default_factory=list)
+    modifier: int = 0
+    total: int = 0
+    advantage_state: str = "normal"
+    reason: str = ""
+
+
+class ContestedCheckResolution(BaseModel):
+    actor: ContestedCheckParticipant
+    opponent: ContestedCheckParticipant
+    winner: str = "tie"   # actor | opponent | tie
+    margin: int = 0
+    reason: str = ""
+
+
 class ActionLogEntry(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     campaign_id: str
@@ -907,3 +1023,55 @@ class ActionLogEntry(BaseModel):
     summary: str = ""
     details: dict = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class RuleAuditEvent(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    campaign_id: str
+    scene_id: Optional[str] = None
+    event_type: str = "check"
+    actor_name: str = "Player"
+    source: str = ""
+    reason: str = ""
+    payload: dict = Field(default_factory=dict)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class EncounterParticipant(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    owner_type: str = "npc"
+    owner_id: str = ""
+    name: str = "Participant"
+    team: str = "enemy"   # player | ally | enemy | neutral
+    initiative_modifier: int = 0
+    initiative_roll: int | None = None
+    initiative_total: int = 0
+    armor_class: int | None = None
+    speed: int = 30
+    current_hp: int | None = None
+    max_hp: int | None = None
+    life_state: str = "active"  # active | down | stable | dead
+    conditions: list[str] = Field(default_factory=list)
+    condition_durations: dict[str, int] = Field(default_factory=dict)
+    concentration_label: str = ""
+    pending_concentration_dc: int | None = None
+    action_available: bool = True
+    bonus_action_available: bool = True
+    reaction_available: bool = True
+    movement_remaining: int = 30
+    is_active: bool = True
+
+
+class Encounter(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    campaign_id: str
+    scene_id: Optional[str] = None
+    name: str = "Encounter"
+    status: str = "active"   # active | completed
+    round_number: int = 1
+    current_turn_index: int = 0
+    participants: list[EncounterParticipant] = Field(default_factory=list)
+    encounter_log: list[str] = Field(default_factory=list)
+    summary: str = ""
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))

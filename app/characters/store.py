@@ -4,6 +4,7 @@ from datetime import datetime, UTC
 
 from app.core.database import get_connection, json_decode, json_encode
 from app.core.models import CharacterSheet
+from app.characters.sheets import normalize_sheet
 
 
 def _now() -> datetime:
@@ -15,6 +16,7 @@ class CharacterSheetStore:
         self._db = db_path
 
     def save(self, sheet: CharacterSheet) -> None:
+        sheet = normalize_sheet(sheet)
         with get_connection(self._db) as conn:
             conn.execute(
                 """
@@ -22,8 +24,8 @@ class CharacterSheetStore:
                     (id, campaign_id, owner_type, owner_id, name, ancestry, character_class,
                      background, level, proficiency_bonus, abilities, skill_modifiers,
                      save_modifiers, max_hp, current_hp, temp_hp, armor_class, speed,
-                     currencies, conditions, notes, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     currencies, resource_pools, prepared_spells, equipped_items, item_charges, conditions, notes, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     owner_type=excluded.owner_type,
                     owner_id=excluded.owner_id,
@@ -42,6 +44,10 @@ class CharacterSheetStore:
                     armor_class=excluded.armor_class,
                     speed=excluded.speed,
                     currencies=excluded.currencies,
+                    resource_pools=excluded.resource_pools,
+                    prepared_spells=excluded.prepared_spells,
+                    equipped_items=excluded.equipped_items,
+                    item_charges=excluded.item_charges,
                     conditions=excluded.conditions,
                     notes=excluded.notes,
                     updated_at=excluded.updated_at
@@ -54,7 +60,7 @@ class CharacterSheetStore:
                     json_encode(sheet.save_modifiers),
                     sheet.max_hp, sheet.current_hp, sheet.temp_hp,
                     sheet.armor_class, sheet.speed,
-                    json_encode(sheet.currencies), json_encode(sheet.conditions),
+                    json_encode(sheet.currencies), json_encode(sheet.resource_pools), json_encode(sheet.prepared_spells), json_encode(sheet.equipped_items), json_encode(sheet.item_charges), json_encode(sheet.conditions),
                     sheet.notes, sheet.created_at.isoformat(), sheet.updated_at.isoformat(),
                 ),
             )
@@ -91,12 +97,13 @@ class CharacterSheetStore:
             if hasattr(sheet, key) and value is not None:
                 setattr(sheet, key, value)
         sheet.updated_at = _now()
+        sheet = normalize_sheet(sheet)
         self.save(sheet)
         return sheet
 
 
 def _row_to_sheet(row) -> CharacterSheet:
-    return CharacterSheet(
+    return normalize_sheet(CharacterSheet(
         id=row["id"],
         campaign_id=row["campaign_id"],
         owner_type=row["owner_type"],
@@ -116,9 +123,13 @@ def _row_to_sheet(row) -> CharacterSheet:
         armor_class=row["armor_class"],
         speed=row["speed"],
         currencies=json_decode(row["currencies"]) or {},
+        resource_pools=json_decode(row["resource_pools"]) if "resource_pools" in row.keys() and row["resource_pools"] else {},
+        prepared_spells=json_decode(row["prepared_spells"]) if "prepared_spells" in row.keys() and row["prepared_spells"] else [],
+        equipped_items=json_decode(row["equipped_items"]) if "equipped_items" in row.keys() and row["equipped_items"] else {},
+        item_charges=json_decode(row["item_charges"]) if "item_charges" in row.keys() and row["item_charges"] else {},
         conditions=json_decode(row["conditions"]) or [],
         notes=row["notes"] or "",
         created_at=datetime.fromisoformat(row["created_at"]),
         updated_at=datetime.fromisoformat(row["updated_at"]),
-    )
+    ))
 

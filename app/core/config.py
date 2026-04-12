@@ -113,6 +113,7 @@ class Config(BaseSettings):
     cards_dir: str = str(DATA_DIR / "cards")
     lorebooks_dir: str = str(DATA_DIR / "lorebooks")
     rules_dir: str = str(DATA_DIR / "rulebooks")
+    compendium_dir: str = str(DATA_DIR / "compendium")
 
     def active_model(self) -> str:
         """Return the model name for the active provider."""
