@@ -1753,9 +1753,18 @@ def delete_chronicle_entry(campaign_id: str, entry_id: str):
     store.delete(entry_id)
 
 
-_COMPRESS_SYSTEM = """You are a narrative historian. You will receive several chronicle entries from a roleplay campaign.
-Merge them into a single, coherent summary that preserves all essential plot points, character developments, and consequences.
-Write in past tense. Be concise but complete. Return only the merged summary text — no preamble, no labels."""
+_COMPRESS_SYSTEM = """You are a chronicle compressor. You will receive several chronicle entries from a roleplay campaign.
+Your ONLY job is to condense them into a single shorter summary.
+
+CRITICAL RULES:
+- You are NOT a storyteller. Do NOT write fiction, narration, or creative prose.
+- The events described are FINISHED AND FIXED — do not add, extend, or continue them.
+- Every fact in your output MUST come directly from the provided entries. Do NOT invent new events, dialogue, characters, or outcomes.
+- Do NOT speculate about what might happen next.
+- Do NOT embellish or add atmosphere beyond what is stated.
+
+Write in past tense. Be concise but complete. Preserve all essential plot points, character developments, and consequences.
+Return only the merged summary text — no preamble, no labels, no commentary."""
 
 
 @router.post("/{campaign_id}/chronicle/compress")
